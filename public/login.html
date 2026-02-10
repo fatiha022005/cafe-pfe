@@ -1,0 +1,85 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connexion | CaféPOS</title>
+    <script>
+        (function() {
+            try {
+                var t = localStorage.getItem('cafepos_theme') || 'latte';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {}
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+
+<div class="login-ambient" aria-hidden="true">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+</div>
+
+<div class="login-wrapper">
+    <div class="login-card glass">
+        <div class="brand-header">
+            <div class="logo" aria-hidden="true">
+                <svg class="logo-mark" viewBox="0 0 48 48" role="img" aria-label="CaféPOS">
+                    <defs>
+                        <linearGradient id="logoGradientLogin" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0%" stop-color="#f0b37e" />
+                            <stop offset="60%" stop-color="#c85c2a" />
+                            <stop offset="100%" stop-color="#8b3a1a" />
+                        </linearGradient>
+                        <linearGradient id="logoHighlightLogin" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.7" />
+                            <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+                        </linearGradient>
+                        <filter id="logoShadowLogin" x="-20%" y="-20%" width="140%" height="140%">
+                            <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#c85c2a" flood-opacity="0.35" />
+                        </filter>
+                    </defs>
+                    <rect x="4" y="4" width="40" height="40" rx="12" fill="url(#logoGradientLogin)" filter="url(#logoShadowLogin)" />
+                    <path d="M16 18h16v9a6 6 0 0 1-6 6h-4a6 6 0 0 1-6-6v-9z" fill="#fff3e7" />
+                    <path d="M32 20h3a3 3 0 0 1 0 6h-3" fill="none" stroke="#fff3e7" stroke-width="2" stroke-linecap="round" />
+                    <path d="M18 13c0 2 2 2 2 4" stroke="#fff3e7" stroke-width="2" stroke-linecap="round" fill="none" />
+                    <path d="M24 13c0 2 2 2 2 4" stroke="#fff3e7" stroke-width="2" stroke-linecap="round" fill="none" />
+                    <path d="M30 13c0 2 2 2 2 4" stroke="#fff3e7" stroke-width="2" stroke-linecap="round" fill="none" />
+                    <rect x="6" y="6" width="36" height="36" rx="10" fill="url(#logoHighlightLogin)" />
+                </svg>
+            </div>
+            <h1>CaféPOS</h1>
+            <p>Administration Système</p>
+        </div>
+
+        <form id="login-form">
+            <div class="input-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" required placeholder="admin@exemple.com" autocomplete="email">
+            </div>
+
+            <div class="input-group">
+                <label for="password">Mot de passe</label>
+                <input type="password" id="password" required placeholder="••••••••" autocomplete="current-password">
+            </div>
+
+            <div id="feedback" class="alert hidden"></div>
+
+            <button type="submit" id="btn-login" class="btn-primary">
+                Se connecter
+            </button>
+        </form>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/login.js"></script>
+
+</body>
+</html>

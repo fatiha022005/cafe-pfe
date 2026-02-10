@@ -1,0 +1,80 @@
+﻿.table-wrapper {
+    overflow-x: auto;
+    background: var(--surface-card-strong);
+}
+
+.table-modern {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+}
+
+.table-modern th {
+    text-align: left;
+    padding: 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--table-head-bg);
+    letter-spacing: 0.5px;
+}
+
+.table-modern td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-main);
+}
+
+.table-modern th.text-center,
+.table-modern td.text-center {
+    text-align: center;
+}
+
+.table-modern td.text-right,
+.table-modern th.text-right {
+    text-align: right;
+}
+
+.table-modern tr:hover td {
+    background: rgba(200, 92, 42, 0.04);
+}
+
+.badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+}
+.badge-neutral { background: rgba(100, 116, 139, 0.15); color: #64748b; }
+.badge-primary { background: rgba(37, 99, 235, 0.12); color: #2563eb; }
+.badge-soft { background: rgba(200, 92, 42, 0.12); color: var(--primary); }
+.badge-success { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+.badge-warning { background: rgba(217, 119, 6, 0.15); color: #d97706; }
+.badge-danger { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
+
+.btn-icon-sm {
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    opacity: 0.8;
+    font-size: 16px;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.2s ease, background 0.2s ease;
+}
+.btn-icon-sm:hover { opacity: 1; transform: scale(1.05); border-color: var(--border); background: var(--surface-card); }
+.btn-icon-sm .icon-svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.opacity-50 { opacity: 0.6; }
