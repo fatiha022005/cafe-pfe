@@ -1,15 +1,45 @@
-﻿-- CONFIGURATION INITIALE
--- Extensions nécessaires pour les UUID
+﻿-- ============================================================
+--  CAFEPOS - SCRIPT UNIQUE (RE-EXECUTABLE) - SUPABASE / POSTGRES
+-- ============================================================
+
+-- 0) EXTENSIONS
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 1. TABLE DES UTILISATEURS / EMPLOYÉS
--- Cette table étend auth.users pour les admins et sert de table principale pour les serveurs.
+-- 1) CLEANUP (re-run safety)
+-- 1.1 Drop RPC functions (depend on tables/policies but safe to drop first too)
+DROP FUNCTION IF EXISTS public.login_with_pin(text);
+DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb);
+DROP FUNCTION IF EXISTS public.get_orders_by_user(uuid);
+
+-- 1.2 Drop helper function + trigger function (will be recreated)
+DROP FUNCTION IF EXISTS public.is_admin();
+DROP FUNCTION IF EXISTS public.update_updated_at_column();
+
+-- 1.3 Drop triggers (must be before dropping tables)
+DROP TRIGGER IF EXISTS update_users_modtime ON public.users;
+DROP TRIGGER IF EXISTS update_products_modtime ON public.products;
+DROP TRIGGER IF EXISTS update_tables_modtime ON public.tables;
+DROP TRIGGER IF EXISTS update_orders_modtime ON public.orders;
+
+-- 1.4 Drop tables in dependency order
+DROP TABLE IF EXISTS public.stock_logs CASCADE;
+DROP TABLE IF EXISTS public.order_items CASCADE;
+DROP TABLE IF EXISTS public.orders CASCADE;
+DROP TABLE IF EXISTS public.tables CASCADE;
+DROP TABLE IF EXISTS public.products CASCADE;
+DROP TABLE IF EXISTS public.users CASCADE;
+
+-- ============================================================
+-- 2) TABLES
+-- ============================================================
+
+-- 2.1 USERS
 CREATE TABLE public.users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    auth_user_id UUID REFERENCES auth.users(id), -- Lien vers Supabase Auth (NULL pour les serveurs sans email)
+    auth_user_id UUID REFERENCES auth.users(id),
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
-    email TEXT UNIQUE, -- Optionnel pour les serveurs
+    email TEXT UNIQUE,
     role TEXT NOT NULL CHECK (role IN ('admin', 'server')),
     pin_code TEXT UNIQUE CHECK (pin_code ~ '^[0-9]{4}$'),
     is_active BOOLEAN DEFAULT true,
@@ -17,11 +47,11 @@ CREATE TABLE public.users (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 2. TABLE DES PRODUITS
+-- 2.2 PRODUCTS
 CREATE TABLE public.products (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
-    category TEXT NOT NULL, -- Pourrait être une table séparée
+    category TEXT NOT NULL,
     price DECIMAL(10, 2) NOT NULL CHECK (price >= 0),
     cost DECIMAL(10, 2) NOT NULL DEFAULT 0 CHECK (cost >= 0),
     stock_quantity INT NOT NULL DEFAULT 0,
@@ -32,7 +62,7 @@ CREATE TABLE public.products (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 3. TABLES DU RESTAURANT
+-- 2.3 TABLES (restaurant tables)
 CREATE TABLE public.tables (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     label TEXT NOT NULL UNIQUE,
@@ -42,34 +72,32 @@ CREATE TABLE public.tables (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 4. TABLE DES COMMANDES (ORDERS)
+-- 2.4 ORDERS
 CREATE TABLE public.orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    order_number SERIAL, -- Numéro court incrémental plus facile à lire qu'un UUID
+    order_number SERIAL,
     table_id UUID REFERENCES public.tables(id) ON DELETE SET NULL,
     user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0,
     payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'other')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT orders_order_number_key UNIQUE (order_number)
 );
 
-ALTER TABLE public.orders
-    ADD CONSTRAINT orders_order_number_key UNIQUE (order_number);
-
--- 5. DÉTAILS DES COMMANDES (Lignes de commande)
+-- 2.5 ORDER ITEMS
 CREATE TABLE public.order_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
     product_id UUID NOT NULL REFERENCES public.products(id),
     quantity INT NOT NULL CHECK (quantity > 0),
-    unit_price DECIMAL(10, 2) NOT NULL, -- Prix au moment de la vente
+    unit_price DECIMAL(10, 2) NOT NULL,
     subtotal DECIMAL(10, 2) GENERATED ALWAYS AS (quantity * unit_price) STORED,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 6. HISTORIQUE DES STOCKS (Mouvements, Pertes, Dégâts)
+-- 2.6 STOCK LOGS
 CREATE TABLE public.stock_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
@@ -80,7 +108,9 @@ CREATE TABLE public.stock_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- INDEXES (Performance)
+-- ============================================================
+-- 3) INDEXES
+-- ============================================================
 CREATE INDEX idx_users_email ON public.users(email);
 CREATE INDEX idx_users_pin ON public.users(pin_code);
 CREATE INDEX idx_products_category ON public.products(category);
@@ -90,8 +120,10 @@ CREATE INDEX idx_orders_table ON public.orders(table_id);
 CREATE INDEX idx_orders_date ON public.orders(created_at);
 CREATE INDEX idx_stock_logs_product ON public.stock_logs(product_id);
 
--- TRIGGER AUTOMATIQUE POUR updated_at
-CREATE OR REPLACE FUNCTION update_updated_at_column()
+-- ============================================================
+-- 4) TRIGGERS updated_at
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = now();
@@ -99,12 +131,25 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_users_modtime BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
-CREATE TRIGGER update_products_modtime BEFORE UPDATE ON public.products FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
-CREATE TRIGGER update_tables_modtime BEFORE UPDATE ON public.tables FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
-CREATE TRIGGER update_orders_modtime BEFORE UPDATE ON public.orders FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_users_modtime
+BEFORE UPDATE ON public.users
+FOR EACH ROW EXECUTE PROCEDURE public.update_updated_at_column();
 
--- SÉCURITÉ (RLS - Row Level Security)
+CREATE TRIGGER update_products_modtime
+BEFORE UPDATE ON public.products
+FOR EACH ROW EXECUTE PROCEDURE public.update_updated_at_column();
+
+CREATE TRIGGER update_tables_modtime
+BEFORE UPDATE ON public.tables
+FOR EACH ROW EXECUTE PROCEDURE public.update_updated_at_column();
+
+CREATE TRIGGER update_orders_modtime
+BEFORE UPDATE ON public.orders
+FOR EACH ROW EXECUTE PROCEDURE public.update_updated_at_column();
+
+-- ============================================================
+-- 5) RLS ENABLE
+-- ============================================================
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tables ENABLE ROW LEVEL SECURITY;
@@ -112,7 +157,9 @@ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_logs ENABLE ROW LEVEL SECURITY;
 
--- Fonction helper: admin uniquement
+-- ============================================================
+-- 6) HELPER: is_admin()
+-- ============================================================
 CREATE OR REPLACE FUNCTION public.is_admin()
 RETURNS boolean
 LANGUAGE plpgsql
@@ -130,60 +177,251 @@ BEGIN
 END;
 $$;
 
--- POLICIES (ADMIN UNIQUEMENT)
--- Users
-CREATE POLICY "Users can read own profile" ON public.users FOR SELECT
-USING (auth.uid() = auth_user_id OR public.is_admin());
-CREATE POLICY "Admins can insert users" ON public.users FOR INSERT WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can update users" ON public.users FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can delete users" ON public.users FOR DELETE USING (public.is_admin());
+-- ============================================================
+-- 7) POLICIES
+-- (Drop first to allow re-run)
+-- ============================================================
 
--- Products
-CREATE POLICY "Admins can read products" ON public.products FOR SELECT USING (public.is_admin());
-CREATE POLICY "Admins can insert products" ON public.products FOR INSERT WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can update products" ON public.products FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can delete products" ON public.products FOR DELETE USING (public.is_admin());
+-- USERS
+DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
+DROP POLICY IF EXISTS "Admins can insert users" ON public.users;
+DROP POLICY IF EXISTS "Admins can update users" ON public.users;
+DROP POLICY IF EXISTS "Admins can delete users" ON public.users;
 
--- Tables
-CREATE POLICY "Admins can read tables" ON public.tables FOR SELECT USING (public.is_admin());
-CREATE POLICY "Admins can insert tables" ON public.tables FOR INSERT WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can update tables" ON public.tables FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can delete tables" ON public.tables FOR DELETE USING (public.is_admin());
+CREATE POLICY "Users can read own profile" ON public.users
+FOR SELECT USING (auth.uid() = auth_user_id OR public.is_admin());
 
--- Orders
-CREATE POLICY "Admins can read orders" ON public.orders FOR SELECT USING (public.is_admin());
-CREATE POLICY "Admins can insert orders" ON public.orders FOR INSERT WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can update orders" ON public.orders FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can delete orders" ON public.orders FOR DELETE USING (public.is_admin());
+CREATE POLICY "Admins can insert users" ON public.users
+FOR INSERT WITH CHECK (public.is_admin());
 
--- Order items
-CREATE POLICY "Admins can read items" ON public.order_items FOR SELECT USING (public.is_admin());
-CREATE POLICY "Admins can insert items" ON public.order_items FOR INSERT WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can update items" ON public.order_items FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can delete items" ON public.order_items FOR DELETE USING (public.is_admin());
+CREATE POLICY "Admins can update users" ON public.users
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
 
--- Stock logs
-CREATE POLICY "Admins can read stock logs" ON public.stock_logs FOR SELECT USING (public.is_admin());
-CREATE POLICY "Admins can insert stock logs" ON public.stock_logs FOR INSERT WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can update stock logs" ON public.stock_logs FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "Admins can delete stock logs" ON public.stock_logs FOR DELETE USING (public.is_admin());
+CREATE POLICY "Admins can delete users" ON public.users
+FOR DELETE USING (public.is_admin());
 
--- DATA DE DÉMARRAGE (SEED)
--- 1. Insérer un Admin (profil public uniquement, le compte Auth doit être créé dans Supabase)
-INSERT INTO public.users (first_name, last_name, email, role, pin_code) 
+-- PRODUCTS
+DROP POLICY IF EXISTS "Admins can read products" ON public.products;
+DROP POLICY IF EXISTS "Admins can insert products" ON public.products;
+DROP POLICY IF EXISTS "Admins can update products" ON public.products;
+DROP POLICY IF EXISTS "Admins can delete products" ON public.products;
+DROP POLICY IF EXISTS "Mobile can read products" ON public.products;
+
+-- Mobile read (true) + Admin full access
+CREATE POLICY "Mobile can read products" ON public.products
+FOR SELECT USING (true);
+
+CREATE POLICY "Admins can insert products" ON public.products
+FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update products" ON public.products
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can delete products" ON public.products
+FOR DELETE USING (public.is_admin());
+
+-- TABLES
+DROP POLICY IF EXISTS "Admins can read tables" ON public.tables;
+DROP POLICY IF EXISTS "Admins can insert tables" ON public.tables;
+DROP POLICY IF EXISTS "Admins can update tables" ON public.tables;
+DROP POLICY IF EXISTS "Admins can delete tables" ON public.tables;
+DROP POLICY IF EXISTS "Mobile can read tables" ON public.tables;
+
+CREATE POLICY "Mobile can read tables" ON public.tables
+FOR SELECT USING (true);
+
+CREATE POLICY "Admins can insert tables" ON public.tables
+FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update tables" ON public.tables
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can delete tables" ON public.tables
+FOR DELETE USING (public.is_admin());
+
+-- ORDERS
+DROP POLICY IF EXISTS "Admins can read orders" ON public.orders;
+DROP POLICY IF EXISTS "Admins can insert orders" ON public.orders;
+DROP POLICY IF EXISTS "Admins can update orders" ON public.orders;
+DROP POLICY IF EXISTS "Admins can delete orders" ON public.orders;
+
+CREATE POLICY "Admins can read orders" ON public.orders
+FOR SELECT USING (public.is_admin());
+
+CREATE POLICY "Admins can insert orders" ON public.orders
+FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update orders" ON public.orders
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can delete orders" ON public.orders
+FOR DELETE USING (public.is_admin());
+
+-- ORDER ITEMS
+DROP POLICY IF EXISTS "Admins can read items" ON public.order_items;
+DROP POLICY IF EXISTS "Admins can insert items" ON public.order_items;
+DROP POLICY IF EXISTS "Admins can update items" ON public.order_items;
+DROP POLICY IF EXISTS "Admins can delete items" ON public.order_items;
+
+CREATE POLICY "Admins can read items" ON public.order_items
+FOR SELECT USING (public.is_admin());
+
+CREATE POLICY "Admins can insert items" ON public.order_items
+FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update items" ON public.order_items
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can delete items" ON public.order_items
+FOR DELETE USING (public.is_admin());
+
+-- STOCK LOGS
+DROP POLICY IF EXISTS "Admins can read stock logs" ON public.stock_logs;
+DROP POLICY IF EXISTS "Admins can insert stock logs" ON public.stock_logs;
+DROP POLICY IF EXISTS "Admins can update stock logs" ON public.stock_logs;
+DROP POLICY IF EXISTS "Admins can delete stock logs" ON public.stock_logs;
+
+CREATE POLICY "Admins can read stock logs" ON public.stock_logs
+FOR SELECT USING (public.is_admin());
+
+CREATE POLICY "Admins can insert stock logs" ON public.stock_logs
+FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update stock logs" ON public.stock_logs
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can delete stock logs" ON public.stock_logs
+FOR DELETE USING (public.is_admin());
+
+-- ============================================================
+-- 8) RPC FUNCTIONS FOR MOBILE
+-- ============================================================
+
+-- 8.1 Login with PIN (no direct select from client)
+CREATE OR REPLACE FUNCTION public.login_with_pin(p_pin text)
+RETURNS TABLE (
+    id uuid,
+    first_name text,
+    last_name text,
+    role text,
+    is_active boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT u.id, u.first_name, u.last_name, u.role, u.is_active
+    FROM public.users u
+    WHERE u.pin_code = p_pin
+      AND u.is_active = true
+    LIMIT 1;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.login_with_pin(text) TO anon, authenticated;
+
+-- 8.2 Create order + items in one RPC (bypass RLS)
+CREATE OR REPLACE FUNCTION public.create_order_with_items(
+    p_user_id uuid,
+    p_table_id uuid,
+    p_payment_method text,
+    p_items jsonb
+)
+RETURNS TABLE (
+    id uuid,
+    order_number int,
+    total_amount numeric,
+    created_at timestamptz,
+    payment_method text,
+    status text,
+    user_id uuid,
+    table_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order public.orders%ROWTYPE;
+    v_total numeric;
+BEGIN
+    IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
+        RAISE EXCEPTION 'items_required';
+    END IF;
+
+    SELECT COALESCE(SUM((item->>'quantity')::int * (item->>'unit_price')::numeric), 0)
+    INTO v_total
+    FROM jsonb_array_elements(p_items) AS item;
+
+    INSERT INTO public.orders (user_id, table_id, status, total_amount, payment_method)
+    VALUES (p_user_id, p_table_id, 'completed', v_total, p_payment_method)
+    RETURNING * INTO v_order;
+
+    INSERT INTO public.order_items (order_id, product_id, quantity, unit_price)
+    SELECT v_order.id,
+           (item->>'product_id')::uuid,
+           (item->>'quantity')::int,
+           (item->>'unit_price')::numeric
+    FROM jsonb_array_elements(p_items) AS item;
+
+    RETURN QUERY
+    SELECT v_order.id, v_order.order_number, v_order.total_amount, v_order.created_at,
+           v_order.payment_method, v_order.status, v_order.user_id, v_order.table_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.create_order_with_items(uuid, uuid, text, jsonb) TO anon, authenticated;
+
+-- 8.3 History by user (bypass RLS)
+CREATE OR REPLACE FUNCTION public.get_orders_by_user(p_user_id uuid)
+RETURNS TABLE (
+    id uuid,
+    order_number int,
+    total_amount numeric,
+    created_at timestamptz,
+    payment_method text,
+    status text,
+    user_id uuid,
+    table_id uuid,
+    table_label text
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT o.id, o.order_number, o.total_amount, o.created_at, o.payment_method, o.status,
+           o.user_id, o.table_id, t.label as table_label
+    FROM public.orders o
+    LEFT JOIN public.tables t ON t.id = o.table_id
+    WHERE o.user_id = p_user_id
+      AND o.status = 'completed'
+    ORDER BY o.created_at DESC;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_orders_by_user(uuid) TO anon, authenticated;
+
+-- ============================================================
+-- 9) SEED DATA (safe-ish: only for empty DB)
+--    If you re-run, this will re-insert because we dropped tables.
+-- ============================================================
+
+-- Admin profile (auth user must be created separately in Supabase Auth)
+INSERT INTO public.users (first_name, last_name, email, role, pin_code)
 VALUES ('Admin', 'Principal', 'admin@cafepos.com', 'admin', '0000');
 
--- 2. Insérer des Serveurs
-INSERT INTO public.users (first_name, last_name, role, pin_code) VALUES 
+-- Servers
+INSERT INTO public.users (first_name, last_name, role, pin_code) VALUES
 ('Thomas', 'Serveur', 'server', '1234'),
 ('Sarah', 'Matin', 'server', '5678');
 
--- 3. Tables
+-- Tables
 INSERT INTO public.tables (label, capacity) VALUES
 ('T1', 2), ('T2', 2), ('T3', 4), ('T4', 4), ('T5', 6),
 ('T6', 2), ('T7', 4), ('T8', 6), ('T9', 2), ('T10', 4);
 
--- 4. Produits
+-- Products
 INSERT INTO public.products (name, category, price, cost, stock_quantity) VALUES
 ('Espresso', 'Café', 2.00, 0.40, 500),
 ('Cappuccino', 'Café', 3.50, 0.80, 200),

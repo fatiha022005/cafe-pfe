@@ -96,7 +96,7 @@ window.openUserModal = function(userId = null) {
                         </div>
                         <div class="field">
                             <label>${isEdit ? 'Nouveau PIN (optionnel)' : 'Code PIN (4 chiffres)'}</label>
-                            <input type="text" name="pin_code" value="" pattern="\d{4}" maxlength="4" ${isEdit ? '' : 'required'} class="input-std" placeholder="${isEdit ? 'Laisser vide pour garder' : '0000'}">
+                            <input type="text" name="pin_code" value="" pattern="[0-9]{4}" maxlength="4" ${isEdit ? '' : 'required'} class="input-std" placeholder="${isEdit ? 'Laisser vide pour garder' : '0000'}">
                         </div>
                         <div class="field full"><label>Email (Optionnel pour serveurs)</label><input type="email" name="email" value="${escapeHtml(user?.email || '')}" class="input-std"></div>
                         <div class="field full">
