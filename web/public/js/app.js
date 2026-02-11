@@ -52,7 +52,10 @@ const App = {
         const titles = {
             dashboard: 'Tableau de Bord',
             products: 'Catalogue Produits',
+            tables: 'Plan de Salle',
             orders: 'Historique Commandes',
+            sessions: 'Sessions Serveurs',
+            inventory: 'Stock & Ajustements',
             users: 'Gestion Équipe',
             reports: 'Analytique'
         };

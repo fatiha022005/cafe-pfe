@@ -6,7 +6,10 @@ window.renderUsers = async function() {
     container.innerHTML = `
         <div class="action-header">
             <h3>Équipe</h3>
-            <button class="btn-primary" onclick="openUserModal()">+ Nouveau Membre</button>
+            <div class="flex gap-2">
+                <button class="btn-secondary" onclick="openAdminModal()">+ Admin Web</button>
+                <button class="btn-primary" onclick="openUserModal()">+ Nouveau Membre</button>
+            </div>
         </div>
         <div class="card table-wrapper">
             <table class="table-modern">
@@ -145,4 +148,100 @@ window.handleUserSave = async function(e) {
         document.getElementById('u-modal').remove();
         loadUsers();
     }
+};
+
+window.openAdminModal = function() {
+    const modalHtml = `
+        <div class="modal-backdrop" id="admin-modal">
+            <div class="modal-window">
+                <div class="modal-head">
+                    <h3>Créer un Admin Web</h3>
+                    <button class="close-modal" onclick="document.getElementById('admin-modal').remove()">&times;</button>
+                </div>
+                <form id="admin-form" onsubmit="handleAdminCreate(event)">
+                    <div class="form-grid">
+                        <div class="field">
+                            <label>Prénom</label>
+                            <input type="text" name="first_name" required class="input-std">
+                        </div>
+                        <div class="field">
+                            <label>Nom</label>
+                            <input type="text" name="last_name" required class="input-std">
+                        </div>
+                        <div class="field full">
+                            <label>Email</label>
+                            <input type="email" name="email" required class="input-std">
+                        </div>
+                        <div class="field">
+                            <label>Mot de passe</label>
+                            <input type="password" name="password" required class="input-std" minlength="8">
+                        </div>
+                        <div class="field">
+                            <label>Confirmation</label>
+                            <input type="password" name="password_confirm" required class="input-std" minlength="8">
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" onclick="document.getElementById('admin-modal').remove()">Annuler</button>
+                        <button type="submit" class="btn-primary">Créer</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+    document.getElementById('user-modal-container').innerHTML = modalHtml;
+};
+
+window.handleAdminCreate = async function(e) {
+    e.preventDefault();
+    const form = e.target;
+    const data = Object.fromEntries(new FormData(form));
+    const email = (data.email || '').trim();
+    const firstName = (data.first_name || '').trim();
+    const lastName = (data.last_name || '').trim();
+    const password = data.password || '';
+    const confirm = data.password_confirm || '';
+
+    if (!email || !firstName || !lastName) {
+        alert('Veuillez remplir tous les champs.');
+        return;
+    }
+    if (password.length < 8) {
+        alert('Mot de passe trop court (min 8 caractères).');
+        return;
+    }
+    if (password !== confirm) {
+        alert('Les mots de passe ne correspondent pas.');
+        return;
+    }
+
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) {
+        alert('Session invalide. Veuillez vous reconnecter.');
+        return;
+    }
+
+    const res = await fetch('api/create-admin.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+            email,
+            password,
+            first_name: firstName,
+            last_name: lastName
+        })
+    });
+
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        alert(payload?.error || 'Impossible de créer l’admin.');
+        return;
+    }
+
+    document.getElementById('admin-modal').remove();
+    loadUsers();
 };

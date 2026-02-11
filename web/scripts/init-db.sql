@@ -20,9 +20,12 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- 1.1 Drop RPC functions (drop both signatures where relevant)
 DROP FUNCTION IF EXISTS public.login_with_pin(text);
 DROP FUNCTION IF EXISTS public.get_orders_by_user(uuid);
+DROP FUNCTION IF EXISTS public.open_server_session(uuid);
 DROP FUNCTION IF EXISTS public.open_server_session(uuid, numeric);
 DROP FUNCTION IF EXISTS public.get_open_session(uuid);
+DROP FUNCTION IF EXISTS public.close_server_session(uuid);
 DROP FUNCTION IF EXISTS public.close_server_session(uuid, numeric);
+DROP FUNCTION IF EXISTS public.adjust_stock(uuid, uuid, int, text, text);
 
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb);
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb, uuid);
@@ -32,10 +35,21 @@ DROP FUNCTION IF EXISTS public.is_admin();
 DROP FUNCTION IF EXISTS public.update_updated_at_column();
 
 -- 1.3 Drop triggers (before dropping tables)
-DROP TRIGGER IF EXISTS update_users_modtime ON public.users;
-DROP TRIGGER IF EXISTS update_products_modtime ON public.products;
-DROP TRIGGER IF EXISTS update_tables_modtime ON public.tables;
-DROP TRIGGER IF EXISTS update_orders_modtime ON public.orders;
+DO $$
+BEGIN
+    IF to_regclass('public.users') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS update_users_modtime ON public.users;
+    END IF;
+    IF to_regclass('public.products') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS update_products_modtime ON public.products;
+    END IF;
+    IF to_regclass('public.tables') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS update_tables_modtime ON public.tables;
+    END IF;
+    IF to_regclass('public.orders') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS update_orders_modtime ON public.orders;
+    END IF;
+END $$;
 
 -- 1.4 Drop tables in dependency order
 DROP TABLE IF EXISTS public.stock_logs CASCADE;
@@ -89,16 +103,19 @@ CREATE TABLE public.tables (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 2.4 SESSIONS SERVEURS
+-- 2.4 SESSIONS SERVEURS (sans cash)
 CREATE TABLE public.sessions_serveurs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     start_time TIMESTAMP WITH TIME ZONE DEFAULT now(),
     end_time TIMESTAMP WITH TIME ZONE,
-    total_collecte DECIMAL(10,2) DEFAULT 0,
-    opening_cash DECIMAL(10,2) DEFAULT 0,
-    closing_cash DECIMAL(10,2)
+    total_collecte DECIMAL(10,2) DEFAULT 0
 );
+
+-- Remove cash columns if they exist from previous version
+ALTER TABLE IF EXISTS public.sessions_serveurs
+    DROP COLUMN IF EXISTS opening_cash,
+    DROP COLUMN IF EXISTS closing_cash;
 
 -- Unique open session per user
 CREATE UNIQUE INDEX sessions_serveurs_open_unique
@@ -111,7 +128,7 @@ CREATE TABLE public.orders (
     order_number SERIAL,
     table_id UUID REFERENCES public.tables(id) ON DELETE SET NULL,
     user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    session_id UUID REFERENCES public.sessions_serveurs(id) ON DELETE SET NULL,
+    session_id UUID,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0,
     payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'other')),
@@ -119,6 +136,22 @@ CREATE TABLE public.orders (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     CONSTRAINT orders_order_number_key UNIQUE (order_number)
 );
+
+-- Ensure session_id exists for existing databases
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS session_id uuid;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE constraint_name = 'orders_session_id_fkey'
+          AND table_name = 'orders'
+    ) THEN
+        ALTER TABLE public.orders
+            ADD CONSTRAINT orders_session_id_fkey
+            FOREIGN KEY (session_id) REFERENCES public.sessions_serveurs(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- 2.6 ORDER ITEMS
 CREATE TABLE public.order_items (
@@ -218,10 +251,15 @@ $$;
 -- ============================================================
 
 -- USERS
-DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
-DROP POLICY IF EXISTS "Admins can insert users" ON public.users;
-DROP POLICY IF EXISTS "Admins can update users" ON public.users;
-DROP POLICY IF EXISTS "Admins can delete users" ON public.users;
+DO $$
+BEGIN
+    IF to_regclass('public.users') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
+        DROP POLICY IF EXISTS "Admins can insert users" ON public.users;
+        DROP POLICY IF EXISTS "Admins can update users" ON public.users;
+        DROP POLICY IF EXISTS "Admins can delete users" ON public.users;
+    END IF;
+END $$;
 
 CREATE POLICY "Users can read own profile" ON public.users
 FOR SELECT USING (auth.uid() = auth_user_id OR public.is_admin());
@@ -236,10 +274,15 @@ CREATE POLICY "Admins can delete users" ON public.users
 FOR DELETE USING (public.is_admin());
 
 -- PRODUCTS (mobile read)
-DROP POLICY IF EXISTS "Mobile can read products" ON public.products;
-DROP POLICY IF EXISTS "Admins can insert products" ON public.products;
-DROP POLICY IF EXISTS "Admins can update products" ON public.products;
-DROP POLICY IF EXISTS "Admins can delete products" ON public.products;
+DO $$
+BEGIN
+    IF to_regclass('public.products') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Mobile can read products" ON public.products;
+        DROP POLICY IF EXISTS "Admins can insert products" ON public.products;
+        DROP POLICY IF EXISTS "Admins can update products" ON public.products;
+        DROP POLICY IF EXISTS "Admins can delete products" ON public.products;
+    END IF;
+END $$;
 
 CREATE POLICY "Mobile can read products" ON public.products
 FOR SELECT USING (true);
@@ -254,10 +297,15 @@ CREATE POLICY "Admins can delete products" ON public.products
 FOR DELETE USING (public.is_admin());
 
 -- TABLES (mobile read)
-DROP POLICY IF EXISTS "Mobile can read tables" ON public.tables;
-DROP POLICY IF EXISTS "Admins can insert tables" ON public.tables;
-DROP POLICY IF EXISTS "Admins can update tables" ON public.tables;
-DROP POLICY IF EXISTS "Admins can delete tables" ON public.tables;
+DO $$
+BEGIN
+    IF to_regclass('public.tables') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Mobile can read tables" ON public.tables;
+        DROP POLICY IF EXISTS "Admins can insert tables" ON public.tables;
+        DROP POLICY IF EXISTS "Admins can update tables" ON public.tables;
+        DROP POLICY IF EXISTS "Admins can delete tables" ON public.tables;
+    END IF;
+END $$;
 
 CREATE POLICY "Mobile can read tables" ON public.tables
 FOR SELECT USING (true);
@@ -272,10 +320,15 @@ CREATE POLICY "Admins can delete tables" ON public.tables
 FOR DELETE USING (public.is_admin());
 
 -- SESSIONS (admin only)
-DROP POLICY IF EXISTS "Admins can read sessions" ON public.sessions_serveurs;
-DROP POLICY IF EXISTS "Admins can insert sessions" ON public.sessions_serveurs;
-DROP POLICY IF EXISTS "Admins can update sessions" ON public.sessions_serveurs;
-DROP POLICY IF EXISTS "Admins can delete sessions" ON public.sessions_serveurs;
+DO $$
+BEGIN
+    IF to_regclass('public.sessions_serveurs') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Admins can read sessions" ON public.sessions_serveurs;
+        DROP POLICY IF EXISTS "Admins can insert sessions" ON public.sessions_serveurs;
+        DROP POLICY IF EXISTS "Admins can update sessions" ON public.sessions_serveurs;
+        DROP POLICY IF EXISTS "Admins can delete sessions" ON public.sessions_serveurs;
+    END IF;
+END $$;
 
 CREATE POLICY "Admins can read sessions" ON public.sessions_serveurs
 FOR SELECT USING (public.is_admin());
@@ -290,10 +343,15 @@ CREATE POLICY "Admins can delete sessions" ON public.sessions_serveurs
 FOR DELETE USING (public.is_admin());
 
 -- ORDERS (admin only)
-DROP POLICY IF EXISTS "Admins can read orders" ON public.orders;
-DROP POLICY IF EXISTS "Admins can insert orders" ON public.orders;
-DROP POLICY IF EXISTS "Admins can update orders" ON public.orders;
-DROP POLICY IF EXISTS "Admins can delete orders" ON public.orders;
+DO $$
+BEGIN
+    IF to_regclass('public.orders') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Admins can read orders" ON public.orders;
+        DROP POLICY IF EXISTS "Admins can insert orders" ON public.orders;
+        DROP POLICY IF EXISTS "Admins can update orders" ON public.orders;
+        DROP POLICY IF EXISTS "Admins can delete orders" ON public.orders;
+    END IF;
+END $$;
 
 CREATE POLICY "Admins can read orders" ON public.orders
 FOR SELECT USING (public.is_admin());
@@ -308,10 +366,15 @@ CREATE POLICY "Admins can delete orders" ON public.orders
 FOR DELETE USING (public.is_admin());
 
 -- ORDER ITEMS (admin only)
-DROP POLICY IF EXISTS "Admins can read items" ON public.order_items;
-DROP POLICY IF EXISTS "Admins can insert items" ON public.order_items;
-DROP POLICY IF EXISTS "Admins can update items" ON public.order_items;
-DROP POLICY IF EXISTS "Admins can delete items" ON public.order_items;
+DO $$
+BEGIN
+    IF to_regclass('public.order_items') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Admins can read items" ON public.order_items;
+        DROP POLICY IF EXISTS "Admins can insert items" ON public.order_items;
+        DROP POLICY IF EXISTS "Admins can update items" ON public.order_items;
+        DROP POLICY IF EXISTS "Admins can delete items" ON public.order_items;
+    END IF;
+END $$;
 
 CREATE POLICY "Admins can read items" ON public.order_items
 FOR SELECT USING (public.is_admin());
@@ -326,10 +389,15 @@ CREATE POLICY "Admins can delete items" ON public.order_items
 FOR DELETE USING (public.is_admin());
 
 -- STOCK LOGS (admin only)
-DROP POLICY IF EXISTS "Admins can read stock logs" ON public.stock_logs;
-DROP POLICY IF EXISTS "Admins can insert stock logs" ON public.stock_logs;
-DROP POLICY IF EXISTS "Admins can update stock logs" ON public.stock_logs;
-DROP POLICY IF EXISTS "Admins can delete stock logs" ON public.stock_logs;
+DO $$
+BEGIN
+    IF to_regclass('public.stock_logs') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Admins can read stock logs" ON public.stock_logs;
+        DROP POLICY IF EXISTS "Admins can insert stock logs" ON public.stock_logs;
+        DROP POLICY IF EXISTS "Admins can update stock logs" ON public.stock_logs;
+        DROP POLICY IF EXISTS "Admins can delete stock logs" ON public.stock_logs;
+    END IF;
+END $$;
 
 CREATE POLICY "Admins can read stock logs" ON public.stock_logs
 FOR SELECT USING (public.is_admin());
@@ -374,17 +442,14 @@ GRANT EXECUTE ON FUNCTION public.login_with_pin(text) TO anon, authenticated;
 
 -- 8.2 Open server session (reuse existing open)
 CREATE OR REPLACE FUNCTION public.open_server_session(
-    p_user_id uuid,
-    p_opening_cash numeric DEFAULT 0
+    p_user_id uuid
 )
 RETURNS TABLE (
     id uuid,
     user_id uuid,
     start_time timestamptz,
     end_time timestamptz,
-    total_collecte numeric,
-    opening_cash numeric,
-    closing_cash numeric
+    total_collecte numeric
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -402,21 +467,21 @@ BEGIN
     IF FOUND THEN
         RETURN QUERY
         SELECT v_session.id, v_session.user_id, v_session.start_time, v_session.end_time,
-               v_session.total_collecte, v_session.opening_cash, v_session.closing_cash;
+               v_session.total_collecte;
         RETURN;
     END IF;
 
-    INSERT INTO public.sessions_serveurs (user_id, opening_cash)
-    VALUES (p_user_id, COALESCE(p_opening_cash, 0))
+    INSERT INTO public.sessions_serveurs (user_id)
+    VALUES (p_user_id)
     RETURNING * INTO v_session;
 
     RETURN QUERY
     SELECT v_session.id, v_session.user_id, v_session.start_time, v_session.end_time,
-           v_session.total_collecte, v_session.opening_cash, v_session.closing_cash;
+           v_session.total_collecte;
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.open_server_session(uuid, numeric) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.open_server_session(uuid) TO anon, authenticated;
 
 -- 8.3 Get open session
 CREATE OR REPLACE FUNCTION public.get_open_session(p_user_id uuid)
@@ -425,15 +490,13 @@ RETURNS TABLE (
     user_id uuid,
     start_time timestamptz,
     end_time timestamptz,
-    total_collecte numeric,
-    opening_cash numeric,
-    closing_cash numeric
+    total_collecte numeric
 )
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-    SELECT s.id, s.user_id, s.start_time, s.end_time, s.total_collecte, s.opening_cash, s.closing_cash
+    SELECT s.id, s.user_id, s.start_time, s.end_time, s.total_collecte
     FROM public.sessions_serveurs s
     WHERE s.user_id = p_user_id AND s.end_time IS NULL
     ORDER BY s.start_time DESC
@@ -444,17 +507,14 @@ GRANT EXECUTE ON FUNCTION public.get_open_session(uuid) TO anon, authenticated;
 
 -- 8.4 Close session (recalculate total_collecte from orders)
 CREATE OR REPLACE FUNCTION public.close_server_session(
-    p_session_id uuid,
-    p_closing_cash numeric DEFAULT NULL
+    p_session_id uuid
 )
 RETURNS TABLE (
     id uuid,
     user_id uuid,
     start_time timestamptz,
     end_time timestamptz,
-    total_collecte numeric,
-    opening_cash numeric,
-    closing_cash numeric
+    total_collecte numeric
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -465,7 +525,6 @@ DECLARE
 BEGIN
     UPDATE public.sessions_serveurs s
     SET end_time = now(),
-        closing_cash = COALESCE(p_closing_cash, s.closing_cash),
         total_collecte = (
             SELECT COALESCE(SUM(o.total_amount), 0)
             FROM public.orders o
@@ -476,11 +535,11 @@ BEGIN
 
     RETURN QUERY
     SELECT v_session.id, v_session.user_id, v_session.start_time, v_session.end_time,
-           v_session.total_collecte, v_session.opening_cash, v_session.closing_cash;
+           v_session.total_collecte;
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.close_server_session(uuid, numeric) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.close_server_session(uuid) TO anon, authenticated;
 
 -- 8.5 Create order + items (updates stock + stock_logs + session_id)
 CREATE OR REPLACE FUNCTION public.create_order_with_items(
@@ -517,6 +576,24 @@ BEGIN
         RAISE EXCEPTION 'items_required';
     END IF;
 
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(p_items) AS item
+        LEFT JOIN public.products p ON p.id = (item->>'product_id')::uuid
+        WHERE p.id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'product_not_found';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(p_items) AS item
+        JOIN public.products p ON p.id = (item->>'product_id')::uuid
+        WHERE COALESCE(p.stock_quantity, 0) < (item->>'quantity')::int
+    ) THEN
+        RAISE EXCEPTION 'insufficient_stock';
+    END IF;
+
     SELECT COALESCE(SUM((item->>'quantity')::int * (item->>'unit_price')::numeric), 0)
     INTO v_total
     FROM jsonb_array_elements(p_items) AS item;
@@ -536,7 +613,12 @@ BEGIN
 
         UPDATE public.products
         SET stock_quantity = COALESCE(stock_quantity, 0) - v_qty
-        WHERE id = v_product_id;
+        WHERE id = v_product_id
+          AND COALESCE(stock_quantity, 0) >= v_qty;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'insufficient_stock';
+        END IF;
 
         INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
         VALUES (v_product_id, p_user_id, -v_qty, 'sale', 'Mobile POS');
@@ -577,6 +659,51 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.get_orders_by_user(uuid) TO anon, authenticated;
+
+-- 8.7 Adjust stock + log (admin only)
+CREATE OR REPLACE FUNCTION public.adjust_stock(
+    p_user_id uuid,
+    p_product_id uuid,
+    p_change_amount int,
+    p_reason text,
+    p_notes text DEFAULT NULL
+)
+RETURNS TABLE (
+    product_id uuid,
+    stock_quantity int
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_stock int;
+BEGIN
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'not_authorized';
+    END IF;
+
+    IF p_change_amount IS NULL OR p_change_amount = 0 THEN
+        RAISE EXCEPTION 'change_amount_required';
+    END IF;
+
+    UPDATE public.products
+    SET stock_quantity = COALESCE(stock_quantity, 0) + p_change_amount
+    WHERE id = p_product_id
+    RETURNING stock_quantity INTO v_stock;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'product_not_found';
+    END IF;
+
+    INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
+    VALUES (p_product_id, p_user_id, p_change_amount, p_reason, p_notes);
+
+    RETURN QUERY SELECT p_product_id, v_stock;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.adjust_stock(uuid, uuid, int, text, text) TO authenticated;
 
 -- ============================================================
 -- 9) SEED DATA
