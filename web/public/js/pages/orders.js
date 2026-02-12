@@ -42,6 +42,24 @@
     await loadOrders();
 };
 
+let currentOrderUserId = null;
+async function ensureOrderUserId() {
+    if (currentOrderUserId) return currentOrderUserId;
+    const { data: authData } = await sb.auth.getUser();
+    const authId = authData?.user?.id;
+    if (!authId) return null;
+    const { data, error } = await sb.from('users')
+        .select('id')
+        .eq('auth_user_id', authId)
+        .single();
+    if (error) {
+        console.error(error);
+        return null;
+    }
+    currentOrderUserId = data.id;
+    return currentOrderUserId;
+}
+
 async function loadOrders(status = 'all') {
     let query = sb.from('orders')
         .select('*, users(first_name, last_name), tables(label)')
@@ -92,12 +110,26 @@ window.showOrderDetails = async function(orderId) {
     }
 
     const items = order.order_items || [];
-    const itemsHtml = items.length ? items.map(item => `
+    const allowCancel = order.status === 'completed';
+    const itemsHtml = items.length ? items.map(item => {
+        const qty = toNumber(item.quantity);
+        const cancelledQty = toNumber(item.cancelled_quantity);
+        const netQty = toNumber(item.net_quantity ?? (qty - cancelledQty));
+        const netSubtotal = toNumber(item.net_subtotal ?? item.subtotal);
+        const canCancel = allowCancel && netQty > 0;
+        return `
         <div class="order-item-row">
-            <span>${escapeHtml(item.products?.name || 'Produit')} <small class="text-muted">x${toNumber(item.quantity)}</small></span>
-            <span>${formatMoney(toNumber(item.subtotal))}</span>
-        </div>
-    `).join('') : '<div class="text-muted">Aucun article.</div>';
+            <span>
+                ${escapeHtml(item.products?.name || 'Produit')}
+                <small class="text-muted">x${qty}</small>
+                ${cancelledQty > 0 ? `<small class="text-muted"> (annule: ${cancelledQty})</small>` : ''}
+            </span>
+            <span class="flex gap-2 items-center">
+                <strong>${formatMoney(netSubtotal)}</strong>
+                ${canCancel ? `<button class="btn-secondary btn-sm cancel-item-btn" data-id="${item.id}" data-max="${netQty}">Annuler</button>` : `<span class="text-muted">Annule</span>`}
+            </span>
+        </div>`;
+    }).join('') : '<div class="text-muted">Aucun article.</div>';
 
     const modalHtml = `
         <div class="modal-backdrop" onclick="this.remove()">
@@ -116,7 +148,52 @@ window.showOrderDetails = async function(orderId) {
             </div>
         </div>
     `;
-    document.getElementById('modal-area').innerHTML = modalHtml;
+    const modalArea = document.getElementById('modal-area');
+    modalArea.innerHTML = modalHtml;
+    modalArea.dataset.orderId = orderId;
+
+    if (!modalArea.dataset.bound) {
+        modalArea.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.cancel-item-btn');
+            if (!btn) return;
+            const itemId = btn.dataset.id;
+            const maxQty = parseInt(btn.dataset.max, 10);
+            if (!itemId || !maxQty) return;
+
+            const qtyInput = prompt(`Annuler combien d'articles ? (1-${maxQty})`, String(maxQty));
+            if (!qtyInput) return;
+            const qty = parseInt(qtyInput, 10);
+            if (!qty || qty < 1 || qty > maxQty) {
+                alert('Quantite invalide.');
+                return;
+            }
+
+            const note = prompt('Note (optionnel)') || null;
+            const userId = await ensureOrderUserId();
+            if (!userId) {
+                alert('Utilisateur non identifie.');
+                return;
+            }
+
+            const { error } = await sb.rpc('cancel_order_item', {
+                p_order_item_id: itemId,
+                p_user_id: userId,
+                p_cancel_qty: qty,
+                p_reason: 'item_cancel',
+                p_note: note
+            });
+
+            if (error) {
+                alert('Erreur: ' + error.message);
+                return;
+            }
+
+            const current = modalArea.dataset.orderId;
+            if (current) showOrderDetails(current);
+            loadOrders();
+        });
+        modalArea.dataset.bound = '1';
+    }
 };
 
 function getStatusClass(s) {
@@ -125,3 +202,7 @@ function getStatusClass(s) {
 function getStatusLabel(s) {
     return { 'completed': 'Terminée', 'pending': 'En cours', 'cancelled': 'Annulée' }[s] || s;
 }
+
+
+
+

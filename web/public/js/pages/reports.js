@@ -110,27 +110,60 @@ async function loadReportsData() {
     const end = endDate.toISOString();
 
     try {
-        const { data: items, error } = await sb.from('order_items')
+        let items = [];
+        const primary = await sb.from('order_items')
             .select(`
-                quantity,
-                subtotal,
-                products (name)
+                net_quantity,
+                net_subtotal,
+                products (name),
+                orders!inner (status)
             `)
             .gte('created_at', start)
-            .lte('created_at', end);
+            .lte('created_at', end)
+            .eq('orders.status', 'completed');
 
-        if (error) throw error;
+        if (primary.error) {
+            const { data: orderIds, error: orderIdsError } = await sb.from('orders')
+                .select('id')
+                .gte('created_at', start)
+                .lte('created_at', end)
+                .eq('status', 'completed');
+
+            if (orderIdsError) {
+                throw orderIdsError;
+            }
+
+            const ids = (orderIds || []).map(o => o.id);
+            if (!ids.length) {
+                items = [];
+            } else {
+                const fallback = await sb.from('order_items')
+                    .select(`
+                        quantity,
+                        subtotal,
+                        products (name)
+                    `)
+                    .in('order_id', ids);
+
+                if (fallback.error) {
+                    throw fallback.error;
+                }
+                items = fallback.data || [];
+            }
+        } else {
+            items = primary.data || [];
+        }
 
         let totalRev = 0;
         let totalQty = 0;
         const productStats = {};
 
         items.forEach(item => {
-            totalRev += toNumber(item.subtotal);
-            totalQty += toNumber(item.quantity);
+            totalRev += toNumber(item.net_subtotal ?? item.subtotal);
+            totalQty += toNumber(item.net_quantity ?? item.quantity);
             
             const pName = item.products?.name || 'Produit Inconnu';
-            productStats[pName] = (productStats[pName] || 0) + toNumber(item.quantity);
+            productStats[pName] = (productStats[pName] || 0) + toNumber(item.net_quantity ?? item.quantity);
         });
 
         document.getElementById('rep-total').textContent = formatMoney(totalRev);
@@ -147,7 +180,7 @@ async function loadReportsData() {
             .select('total_amount, status, users(first_name, last_name)')
             .gte('created_at', start)
             .lte('created_at', end)
-            .neq('status', 'cancelled');
+            .eq('status', 'completed');
 
         if (ordersError) throw ordersError;
 

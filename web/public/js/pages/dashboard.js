@@ -147,17 +147,20 @@ async function loadDashboardData(range) {
         const { data: orders, error: errOrders } = await sb.from('orders')
             .select('total_amount, created_at')
             .gte('created_at', start.toISOString())
-            .neq('status', 'cancelled');
+            .eq('status', 'completed');
 
         if (errOrders) throw errOrders;
 
-        const { data: stock, error: errStock } = await sb.from('products')
-            .select('name, stock_quantity')
-            .lte('stock_quantity', 10)
+        const { data: stockRows, error: errStock } = await sb.from('products')
+            .select('name, stock_quantity, min_stock_alert')
             .order('stock_quantity', { ascending: true })
-            .limit(10);
+            .limit(50);
 
         if (errStock) throw errStock;
+
+        const lowStock = (stockRows || [])
+            .filter(p => toNumber(p.stock_quantity) <= toNumber(p.min_stock_alert ?? 10))
+            .slice(0, 10);
 
         const totalRevenue = orders.reduce((acc, o) => acc + toNumber(o.total_amount), 0);
         const totalOrders = orders.length;
@@ -166,13 +169,13 @@ async function loadDashboardData(range) {
         document.getElementById('d-revenue').textContent = formatMoney(totalRevenue);
         document.getElementById('d-orders').textContent = totalOrders;
         document.getElementById('d-avg').textContent = formatMoney(averageBasket);
-        document.getElementById('d-stock').textContent = stock.length;
+        document.getElementById('d-stock').textContent = lowStock.length;
 
         const stockTbody = document.getElementById('stock-alert-list');
-        if (stock.length === 0) {
+        if (lowStock.length === 0) {
             stockTbody.innerHTML = '<tr><td colspan="2" class="text-muted text-center">Tout est OK</td></tr>';
         } else {
-            stockTbody.innerHTML = stock.map(p => `
+            stockTbody.innerHTML = lowStock.map(p => `
                 <tr>
                     <td>${escapeHtml(p.name)}</td>
                     <td class="text-right text-danger font-bold">${toNumber(p.stock_quantity)}</td>

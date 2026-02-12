@@ -1,8 +1,9 @@
+﻿const ENV = window.CAFEPOS_CONFIG || {};
 const CONFIG = {
-    SUPABASE_URL: 'https://gxweofraymbcwqxbcsln.supabase.co',
+    SUPABASE_URL: ENV.SUPABASE_URL || 'https://nmwqihsbedoyxupqwime.supabase.co',
     // NOTE: En production, utilisez des variables d'environnement ou un backend proxy.
     // La clé publique est acceptable ici si les RLS (Row Level Security) sont bien configurés en base.
-    SUPABASE_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4d2VvZnJheW1iY3dxeGJjc2xuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxMzA5NjQsImV4cCI6MjA4NTcwNjk2NH0.7bNRXmW0mcnvGT9DhowlzvM3EpWZ_cX-sX2MQc_Z3hk',
+    SUPABASE_KEY: ENV.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5td3FpaHNiZWRveXh1cHF3aW1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NTgxMTUsImV4cCI6MjA4NjMzNDExNX0.eXmA88UCSMGr8xUnpULZQBAIwaxaL_XM4HO5B7Nfp2o',
     CURRENCY: 'MAD',
     LOCALE: 'fr-MA'
 };
@@ -48,3 +49,6 @@ const escapeHtml = (value) => String(value ?? '')
 
 const formatMoney = (amount) => new Intl.NumberFormat(CONFIG.LOCALE, { style: 'currency', currency: CONFIG.CURRENCY }).format(toNumber(amount));
 const formatDate = (dateString) => new Date(dateString).toLocaleString(CONFIG.LOCALE, { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+
+
