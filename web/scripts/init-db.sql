@@ -20,6 +20,8 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- 1.1 Drop RPC functions (drop both signatures where relevant)
 DROP FUNCTION IF EXISTS public.login_with_pin(text);
 DROP FUNCTION IF EXISTS public.get_orders_by_user(uuid);
+DROP FUNCTION IF EXISTS public.get_order_items_by_order(uuid);
+DROP FUNCTION IF EXISTS public.get_order_items_by_order(uuid, uuid);
 DROP FUNCTION IF EXISTS public.open_server_session(uuid);
 DROP FUNCTION IF EXISTS public.open_server_session(uuid, numeric);
 DROP FUNCTION IF EXISTS public.get_open_session(uuid);
@@ -32,6 +34,13 @@ DROP FUNCTION IF EXISTS public.remove_pending_order_item_damage(uuid, uuid, uuid
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb);
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb, uuid);
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb, uuid, numeric, numeric);
+DROP FUNCTION IF EXISTS public.upsert_pending_order_with_items(uuid, uuid, jsonb);
+DROP FUNCTION IF EXISTS public.upsert_pending_order_with_items(uuid, uuid, jsonb, uuid);
+DROP FUNCTION IF EXISTS public.get_pending_orders(uuid);
+DROP FUNCTION IF EXISTS public.complete_pending_order(uuid, uuid, text);
+DROP FUNCTION IF EXISTS public.complete_pending_order(uuid, uuid, text, uuid, numeric, numeric);
+DROP FUNCTION IF EXISTS public.cancel_pending_order(uuid, uuid, text, text);
+DROP FUNCTION IF EXISTS public.cancel_order_item(uuid, uuid, int, text, text);
 
 -- 1.2 Drop helper + trigger function
 DROP FUNCTION IF EXISTS public.is_admin();
@@ -136,8 +145,12 @@ CREATE TABLE public.orders (
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0,
     payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'other', 'split')),
-    cash_amount DECIMAL(10, 2),
-    card_amount DECIMAL(10, 2),
+    cash_amount DECIMAL(10, 2) DEFAULT 0,
+    card_amount DECIMAL(10, 2) DEFAULT 0,
+    cancel_reason TEXT,
+    cancel_note TEXT,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    cancelled_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     CONSTRAINT orders_order_number_key UNIQUE (order_number)
@@ -167,6 +180,14 @@ CREATE TABLE public.order_items (
     quantity INT NOT NULL CHECK (quantity > 0),
     unit_price DECIMAL(10, 2) NOT NULL,
     subtotal DECIMAL(10, 2) GENERATED ALWAYS AS (quantity * unit_price) STORED,
+    cancelled_quantity INT NOT NULL DEFAULT 0 CHECK (cancelled_quantity >= 0 AND cancelled_quantity <= quantity),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'cancelled')),
+    cancel_reason TEXT,
+    cancel_note TEXT,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    cancelled_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    net_quantity INT GENERATED ALWAYS AS (GREATEST(quantity - cancelled_quantity, 0)) STORED,
+    net_subtotal DECIMAL(10, 2) GENERATED ALWAYS AS (GREATEST(quantity - cancelled_quantity, 0) * unit_price) STORED,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
@@ -188,7 +209,7 @@ CREATE TABLE public.stock_logs (
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
     user_id UUID REFERENCES public.users(id),
     change_amount INT NOT NULL,
-    reason TEXT NOT NULL CHECK (reason IN ('sale', 'restock', 'correction', 'damage', 'waste')),
+    reason TEXT NOT NULL CHECK (reason IN ('sale', 'restock', 'correction', 'damage', 'waste', 'cancel')),
     notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
@@ -617,7 +638,18 @@ DECLARE
     v_product_id uuid;
     v_qty int;
     v_price numeric;
+    v_cash numeric;
+    v_card numeric;
 BEGIN
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+    IF p_session_id IS NULL THEN
+        RAISE EXCEPTION 'session_required';
+    END IF;
+    IF p_payment_method IS NULL OR p_payment_method NOT IN ('cash', 'card', 'other', 'split') THEN
+        RAISE EXCEPTION 'invalid_payment_method';
+    END IF;
     IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
         RAISE EXCEPTION 'items_required';
     END IF;
@@ -660,27 +692,15 @@ BEGIN
         END IF;
     END IF;
 
+    v_cash := COALESCE(p_cash_amount, CASE WHEN p_payment_method = 'cash' THEN v_total ELSE 0 END);
+    v_card := COALESCE(p_card_amount, CASE WHEN p_payment_method = 'card' THEN v_total ELSE 0 END);
+    IF p_payment_method = 'split' THEN
+        v_cash := COALESCE(p_cash_amount, 0);
+        v_card := COALESCE(p_card_amount, 0);
+    END IF;
+
     INSERT INTO public.orders (user_id, table_id, status, total_amount, payment_method, session_id, cash_amount, card_amount)
-    VALUES (
-        p_user_id,
-        p_table_id,
-        'completed',
-        v_total,
-        p_payment_method,
-        p_session_id,
-        CASE
-            WHEN p_payment_method = 'cash' THEN v_total
-            WHEN p_payment_method = 'split' THEN p_cash_amount
-            WHEN p_payment_method = 'card' THEN 0
-            ELSE NULL
-        END,
-        CASE
-            WHEN p_payment_method = 'card' THEN v_total
-            WHEN p_payment_method = 'split' THEN p_card_amount
-            WHEN p_payment_method = 'cash' THEN 0
-            ELSE NULL
-        END
-    )
+    VALUES (p_user_id, p_table_id, 'completed', v_total, p_payment_method, p_session_id, v_cash, v_card)
     RETURNING * INTO v_order;
 
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
@@ -713,7 +733,496 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.create_order_with_items(uuid, uuid, text, jsonb, uuid, numeric, numeric) TO anon, authenticated;
 
--- 8.6 Orders history by user
+-- 8.6 Pending order upsert (mobile)
+CREATE OR REPLACE FUNCTION public.upsert_pending_order_with_items(
+    p_user_id uuid,
+    p_table_id uuid,
+    p_items jsonb,
+    p_session_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+    id uuid,
+    order_number int,
+    total_amount numeric,
+    created_at timestamptz,
+    payment_method text,
+    status text,
+    user_id uuid,
+    table_id uuid,
+    session_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order public.orders%ROWTYPE;
+    v_total numeric;
+    v_item jsonb;
+    v_product_id uuid;
+    v_qty int;
+    v_price numeric;
+BEGIN
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+    IF p_session_id IS NULL THEN
+        RAISE EXCEPTION 'session_required';
+    END IF;
+    IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
+        RAISE EXCEPTION 'items_required';
+    END IF;
+
+    PERFORM 1
+    FROM public.users u
+    WHERE u.id = p_user_id AND u.is_active = true;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'user_not_active';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(p_items) AS item
+        LEFT JOIN public.products p ON p.id = (item->>'product_id')::uuid
+        WHERE p.id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'product_not_found';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(p_items) AS item
+        JOIN public.products p ON p.id = (item->>'product_id')::uuid
+        WHERE COALESCE(p.stock_quantity, 0) < (item->>'quantity')::int
+    ) THEN
+        RAISE EXCEPTION 'insufficient_stock';
+    END IF;
+
+    SELECT COALESCE(SUM((item->>'quantity')::int * (item->>'unit_price')::numeric), 0)
+    INTO v_total
+    FROM jsonb_array_elements(p_items) AS item;
+
+    SELECT *
+    INTO v_order
+    FROM public.orders
+    WHERE status = 'pending'
+      AND user_id = p_user_id
+      AND table_id IS NOT DISTINCT FROM p_table_id
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF FOUND THEN
+        UPDATE public.orders
+        SET total_amount = v_total,
+            table_id = p_table_id,
+            session_id = p_session_id,
+            updated_at = now()
+        WHERE id = v_order.id
+        RETURNING * INTO v_order;
+
+        DELETE FROM public.order_items WHERE order_id = v_order.id;
+    ELSE
+        INSERT INTO public.orders (user_id, table_id, status, total_amount, session_id)
+        VALUES (p_user_id, p_table_id, 'pending', v_total, p_session_id)
+        RETURNING * INTO v_order;
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_product_id := (v_item->>'product_id')::uuid;
+        v_qty := (v_item->>'quantity')::int;
+        v_price := (v_item->>'unit_price')::numeric;
+
+        IF v_qty <= 0 THEN
+            RAISE EXCEPTION 'invalid_quantity';
+        END IF;
+
+        INSERT INTO public.order_items (order_id, product_id, quantity, unit_price)
+        VALUES (v_order.id, v_product_id, v_qty, v_price);
+    END LOOP;
+
+    RETURN QUERY
+    SELECT v_order.id, v_order.order_number, v_order.total_amount, v_order.created_at,
+           v_order.payment_method, v_order.status, v_order.user_id, v_order.table_id, v_order.session_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.upsert_pending_order_with_items(uuid, uuid, jsonb, uuid) TO anon, authenticated;
+
+-- 8.7 Pending orders list
+CREATE OR REPLACE FUNCTION public.get_pending_orders(p_user_id uuid)
+RETURNS TABLE (
+    id uuid,
+    order_number int,
+    total_amount numeric,
+    created_at timestamptz,
+    status text,
+    user_id uuid,
+    table_id uuid,
+    table_label text,
+    session_id uuid,
+    cancel_reason text,
+    cancel_note text
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT o.id, o.order_number, o.total_amount, o.created_at, o.status,
+           o.user_id, o.table_id, t.label as table_label, o.session_id,
+           o.cancel_reason, o.cancel_note
+    FROM public.orders o
+    LEFT JOIN public.tables t ON t.id = o.table_id
+    WHERE o.status = 'pending'
+      AND (p_user_id IS NULL OR o.user_id = p_user_id)
+    ORDER BY o.created_at DESC;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_pending_orders(uuid) TO anon, authenticated;
+
+-- 8.8 Complete pending order (payment + stock)
+CREATE OR REPLACE FUNCTION public.complete_pending_order(
+    p_order_id uuid,
+    p_user_id uuid,
+    p_payment_method text,
+    p_session_id uuid DEFAULT NULL,
+    p_cash_amount numeric DEFAULT NULL,
+    p_card_amount numeric DEFAULT NULL
+)
+RETURNS TABLE (
+    id uuid,
+    order_number int,
+    total_amount numeric,
+    created_at timestamptz,
+    payment_method text,
+    status text,
+    user_id uuid,
+    table_id uuid,
+    session_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order public.orders%ROWTYPE;
+    v_total numeric;
+    v_item record;
+    v_cash numeric;
+    v_card numeric;
+    v_session uuid;
+BEGIN
+    IF p_order_id IS NULL THEN
+        RAISE EXCEPTION 'order_required';
+    END IF;
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+    IF p_payment_method IS NULL OR p_payment_method NOT IN ('cash', 'card', 'other', 'split') THEN
+        RAISE EXCEPTION 'invalid_payment_method';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id AND status = 'pending'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'order_not_found_or_not_pending';
+    END IF;
+
+    v_session := COALESCE(p_session_id, v_order.session_id);
+    IF v_session IS NULL THEN
+        RAISE EXCEPTION 'session_required';
+    END IF;
+
+    SELECT COALESCE(SUM(oi.net_subtotal), 0)
+    INTO v_total
+    FROM public.order_items oi
+    WHERE oi.order_id = p_order_id;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.order_items oi
+        JOIN public.products p ON p.id = oi.product_id
+        WHERE oi.order_id = p_order_id
+          AND COALESCE(p.stock_quantity, 0) < COALESCE(oi.net_quantity, 0)
+    ) THEN
+        RAISE EXCEPTION 'insufficient_stock';
+    END IF;
+
+    v_cash := COALESCE(p_cash_amount, CASE WHEN p_payment_method = 'cash' THEN v_total ELSE 0 END);
+    v_card := COALESCE(p_card_amount, CASE WHEN p_payment_method = 'card' THEN v_total ELSE 0 END);
+    IF p_payment_method = 'split' THEN
+        v_cash := COALESCE(p_cash_amount, 0);
+        v_card := COALESCE(p_card_amount, 0);
+    END IF;
+
+    UPDATE public.orders
+    SET status = 'completed',
+        total_amount = v_total,
+        payment_method = p_payment_method,
+        session_id = v_session,
+        cash_amount = v_cash,
+        card_amount = v_card,
+        updated_at = now()
+    WHERE id = p_order_id
+    RETURNING * INTO v_order;
+
+    FOR v_item IN
+        SELECT oi.product_id, oi.net_quantity AS qty
+        FROM public.order_items oi
+        WHERE oi.order_id = p_order_id AND oi.net_quantity > 0
+    LOOP
+        UPDATE public.products
+        SET stock_quantity = COALESCE(stock_quantity, 0) - v_item.qty
+        WHERE id = v_item.product_id
+          AND COALESCE(stock_quantity, 0) >= v_item.qty;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'insufficient_stock';
+        END IF;
+
+        INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
+        VALUES (v_item.product_id, p_user_id, -v_item.qty, 'sale', 'Mobile POS');
+    END LOOP;
+
+    RETURN QUERY
+    SELECT v_order.id, v_order.order_number, v_order.total_amount, v_order.created_at,
+           v_order.payment_method, v_order.status, v_order.user_id, v_order.table_id, v_order.session_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.complete_pending_order(uuid, uuid, text, uuid, numeric, numeric) TO anon, authenticated;
+
+-- 8.9 Cancel pending order (no stock movement)
+CREATE OR REPLACE FUNCTION public.cancel_pending_order(
+    p_order_id uuid,
+    p_user_id uuid,
+    p_reason text,
+    p_note text DEFAULT NULL
+)
+RETURNS TABLE (
+    id uuid,
+    order_number int,
+    total_amount numeric,
+    created_at timestamptz,
+    payment_method text,
+    status text,
+    user_id uuid,
+    table_id uuid,
+    session_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order public.orders%ROWTYPE;
+BEGIN
+    IF p_order_id IS NULL THEN
+        RAISE EXCEPTION 'order_required';
+    END IF;
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+
+    UPDATE public.orders
+    SET status = 'cancelled',
+        cancel_reason = p_reason,
+        cancel_note = p_note,
+        cancelled_at = now(),
+        cancelled_by = p_user_id,
+        updated_at = now()
+    WHERE id = p_order_id AND status = 'pending'
+    RETURNING * INTO v_order;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'order_not_found_or_not_pending';
+    END IF;
+
+    RETURN QUERY
+    SELECT v_order.id, v_order.order_number, v_order.total_amount, v_order.created_at,
+           v_order.payment_method, v_order.status, v_order.user_id, v_order.table_id, v_order.session_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.cancel_pending_order(uuid, uuid, text, text) TO anon, authenticated;
+
+-- 8.10 Get order items (mobile/admin)
+CREATE OR REPLACE FUNCTION public.get_order_items_by_order(
+    p_order_id uuid,
+    p_user_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+    id uuid,
+    order_id uuid,
+    product_id uuid,
+    product_name text,
+    quantity int,
+    cancelled_quantity int,
+    unit_price numeric,
+    net_quantity int,
+    net_subtotal numeric,
+    status text,
+    cancel_reason text,
+    cancel_note text,
+    created_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order_user uuid;
+BEGIN
+    IF p_order_id IS NULL THEN
+        RAISE EXCEPTION 'order_required';
+    END IF;
+
+    SELECT user_id INTO v_order_user
+    FROM public.orders
+    WHERE id = p_order_id;
+
+    IF v_order_user IS NULL THEN
+        RAISE EXCEPTION 'order_not_found';
+    END IF;
+
+    IF NOT public.is_admin() THEN
+        IF p_user_id IS NULL OR p_user_id <> v_order_user THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+        PERFORM 1 FROM public.users u WHERE u.id = p_user_id AND u.is_active = true;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+    END IF;
+
+    RETURN QUERY
+    SELECT oi.id, oi.order_id, oi.product_id, p.name, oi.quantity, oi.cancelled_quantity,
+           oi.unit_price, oi.net_quantity, oi.net_subtotal, oi.status,
+           oi.cancel_reason, oi.cancel_note, oi.created_at
+    FROM public.order_items oi
+    JOIN public.products p ON p.id = oi.product_id
+    WHERE oi.order_id = p_order_id
+    ORDER BY oi.created_at ASC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_order_items_by_order(uuid, uuid) TO anon, authenticated;
+
+-- 8.11 Cancel item from completed order (partial possible)
+CREATE OR REPLACE FUNCTION public.cancel_order_item(
+    p_order_item_id uuid,
+    p_user_id uuid,
+    p_cancel_qty int DEFAULT NULL,
+    p_reason text DEFAULT NULL,
+    p_note text DEFAULT NULL
+)
+RETURNS TABLE (
+    order_id uuid,
+    order_item_id uuid,
+    total_amount numeric,
+    status text,
+    cancelled_quantity int,
+    net_quantity int
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_item record;
+    v_order record;
+    v_remaining int;
+    v_cancel int;
+    v_open_items int;
+BEGIN
+    IF p_order_item_id IS NULL THEN
+        RAISE EXCEPTION 'item_required';
+    END IF;
+
+    SELECT oi.*, o.id AS order_id, o.status AS order_status, o.total_amount AS order_total, o.user_id AS order_user_id
+    INTO v_item
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    WHERE oi.id = p_order_item_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'item_not_found';
+    END IF;
+
+    IF v_item.order_status <> 'completed' THEN
+        RAISE EXCEPTION 'order_not_completed';
+    END IF;
+
+    IF NOT public.is_admin() THEN
+        IF p_user_id IS NULL OR p_user_id <> v_item.order_user_id THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+        PERFORM 1 FROM public.users u WHERE u.id = p_user_id AND u.is_active = true;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+    END IF;
+
+    v_remaining := COALESCE(v_item.quantity, 0) - COALESCE(v_item.cancelled_quantity, 0);
+    IF v_remaining <= 0 THEN
+        RAISE EXCEPTION 'item_already_cancelled';
+    END IF;
+
+    v_cancel := COALESCE(p_cancel_qty, v_remaining);
+    IF v_cancel <= 0 OR v_cancel > v_remaining THEN
+        RAISE EXCEPTION 'invalid_cancel_qty';
+    END IF;
+
+    UPDATE public.order_items
+    SET cancelled_quantity = cancelled_quantity + v_cancel,
+        cancel_reason = p_reason,
+        cancel_note = p_note,
+        cancelled_at = now(),
+        cancelled_by = p_user_id,
+        status = CASE WHEN cancelled_quantity + v_cancel >= quantity THEN 'cancelled' ELSE status END
+    WHERE id = p_order_item_id;
+
+    UPDATE public.orders
+    SET total_amount = GREATEST(total_amount - (v_cancel * v_item.unit_price), 0),
+        updated_at = now()
+    WHERE id = v_item.order_id
+    RETURNING * INTO v_order;
+
+    UPDATE public.products
+    SET stock_quantity = COALESCE(stock_quantity, 0) + v_cancel
+    WHERE id = v_item.product_id;
+
+    INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
+    VALUES (v_item.product_id, p_user_id, v_cancel, 'cancel', COALESCE(p_note, 'Annulation article'));
+
+    SELECT COUNT(*) INTO v_open_items
+    FROM public.order_items
+    WHERE order_id = v_item.order_id AND net_quantity > 0;
+
+    IF v_open_items = 0 THEN
+        UPDATE public.orders
+        SET status = 'cancelled',
+            cancel_reason = COALESCE(p_reason, cancel_reason),
+            cancel_note = COALESCE(p_note, cancel_note),
+            cancelled_at = now(),
+            cancelled_by = p_user_id,
+            updated_at = now()
+        WHERE id = v_item.order_id;
+    END IF;
+
+    RETURN QUERY
+    SELECT v_item.order_id, v_item.id, v_order.total_amount, v_order.status,
+           v_item.cancelled_quantity + v_cancel, GREATEST(v_item.quantity - (v_item.cancelled_quantity + v_cancel), 0);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.cancel_order_item(uuid, uuid, int, text, text) TO anon, authenticated;
+
+-- 8.12 Orders history by user
 CREATE OR REPLACE FUNCTION public.get_orders_by_user(p_user_id uuid)
 RETURNS TABLE (
     id uuid,
@@ -724,14 +1233,20 @@ RETURNS TABLE (
     status text,
     user_id uuid,
     table_id uuid,
-    table_label text
+    table_label text,
+    session_id uuid,
+    cash_amount numeric,
+    card_amount numeric,
+    cancel_reason text,
+    cancel_note text
 )
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
 AS $$
     SELECT o.id, o.order_number, o.total_amount, o.created_at, o.payment_method, o.status,
-           o.user_id, o.table_id, t.label as table_label
+           o.user_id, o.table_id, t.label as table_label, o.session_id,
+           o.cash_amount, o.card_amount, o.cancel_reason, o.cancel_note
     FROM public.orders o
     LEFT JOIN public.tables t ON t.id = o.table_id
     WHERE o.user_id = p_user_id
@@ -741,7 +1256,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_orders_by_user(uuid) TO anon, authenticated;
 
--- 8.7 Pending order items (mobile)
+-- 8.13 Pending order items (mobile)
 CREATE OR REPLACE FUNCTION public.get_pending_order_items(
     p_order_id uuid,
     p_user_id uuid
@@ -858,7 +1373,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.remove_pending_order_item_damage(uuid, uuid, uuid, text) TO anon, authenticated;
 
--- 8.8 Adjust stock + log (admin only)
+-- 8.14 Adjust stock + log (admin only)
 CREATE OR REPLACE FUNCTION public.adjust_stock(
     p_user_id uuid,
     p_product_id uuid,

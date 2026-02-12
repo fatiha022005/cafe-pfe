@@ -1,4 +1,4 @@
-let inventoryProducts = [];
+﻿let inventoryProducts = [];
 let inventoryUserId = null;
 
 window.renderInventory = async function() {
@@ -7,7 +7,7 @@ window.renderInventory = async function() {
         <div class="action-header">
             <div>
                 <h3>Stock & Ajustements</h3>
-                <p class="text-muted">Historique des mouvements de stock</p>
+                <p class="text-muted">Stock actuel et historique des mouvements</p>
             </div>
             <div class="filters">
                 <select id="inv-filter" class="select-std select-center">
@@ -17,9 +17,25 @@ window.renderInventory = async function() {
                     <option value="damage">Dégâts</option>
                     <option value="waste">Pertes</option>
                     <option value="sale">Ventes</option>
+                    <option value="cancel">Annulations</option>
                 </select>
                 <button id="btn-adjust" class="btn-primary">+ Ajustement</button>
             </div>
+        </div>
+
+        <div class="card table-wrapper">
+            <table class="table-modern">
+                <thead>
+                    <tr>
+                        <th>Stock Actuel</th>
+                        <th class="text-center">Quantité</th>
+                        <th class="text-center">Alerte</th>
+                    </tr>
+                </thead>
+                <tbody id="current-stock-list">
+                    <tr><td colspan="3" class="loading-text">Chargement...</td></tr>
+                </tbody>
+            </table>
         </div>
 
         <div class="card table-wrapper">
@@ -70,15 +86,17 @@ async function ensureInventoryUser() {
 
 async function loadInventoryProducts() {
     const { data, error } = await sb.from('products')
-        .select('id, name, stock_quantity')
+        .select('id, name, stock_quantity, min_stock_alert')
         .order('name');
 
     if (error) {
         console.error(error);
         inventoryProducts = [];
+        renderCurrentStock();
         return;
     }
     inventoryProducts = data || [];
+    renderCurrentStock();
 }
 
 async function loadInventory() {
@@ -99,7 +117,7 @@ async function loadInventory() {
     }
 
     if (!data || !data.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Aucun mouvement.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Aucun mouvement. Le stock actuel est affiché ci-dessus.</td></tr>';
         return;
     }
 
@@ -120,13 +138,34 @@ async function loadInventory() {
     }).join('');
 }
 
+function renderCurrentStock() {
+    const tbody = document.getElementById('current-stock-list');
+    if (!tbody) return;
+    if (!inventoryProducts || !inventoryProducts.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Aucun produit.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = inventoryProducts.map(p => {
+        const stock = toNumber(p.stock_quantity);
+        const minAlert = toNumber(p.min_stock_alert ?? 10);
+        const status = stock <= minAlert ? 'Stock bas' : 'OK';
+        return `
+        <tr>
+            <td>${escapeHtml(p.name || 'Produit')}</td>
+            <td class="text-center font-bold">${stock}</td>
+            <td class="text-center">${status}</td>
+        </tr>
+    `;}).join('');
+}
+
 function getReasonLabel(reason) {
     return {
         restock: 'Réassort',
         correction: 'Correction',
         damage: 'Dégât',
         waste: 'Perte',
-        sale: 'Vente'
+        sale: 'Vente',
+        cancel: 'Annulation'
     }[reason] || reason;
 }
 
@@ -219,7 +258,7 @@ function openAdjustModal() {
         const direction = document.getElementById('inv-direction').value;
 
         if (!productId || !reason || !qty || qty <= 0) {
-            alert('Veuillez renseigner une quantité valide.');
+            alert('Veuillez renseigner une Quantité valide.');
             return;
         }
 
@@ -229,7 +268,7 @@ function openAdjustModal() {
 
         const userId = await ensureInventoryUser();
         if (!userId) {
-            alert('Impossible d’identifier l’utilisateur.');
+            alert('Impossible dâ€™identifier lâ€™utilisateur.');
             return;
         }
 
@@ -251,3 +290,6 @@ function openAdjustModal() {
         await loadInventory();
     });
 }
+
+
+

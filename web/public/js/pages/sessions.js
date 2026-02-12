@@ -1,4 +1,4 @@
-let sessionCache = new Map();
+﻿let sessionCache = new Map();
 
 const toDateInputValueSessions = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000)
     .toISOString()
@@ -113,7 +113,7 @@ async function loadSessions() {
             <tr>
                 <td>${escapeHtml(userName || 'N/A')}</td>
                 <td class="text-muted">${formatDate(s.start_time)}</td>
-                <td class="text-muted">${s.end_time ? formatDate(s.end_time) : '—'}</td>
+                <td class="text-muted">${s.end_time ? formatDate(s.end_time) : 'â€”'}</td>
                 <td class="text-center font-bold">${total}</td>
                 <td class="text-center"><span class="badge ${statusClass}">${statusLabel}</span></td>
                 <td class="text-right">
@@ -132,6 +132,7 @@ async function showSessionDetails(sessionId) {
     const { data: orders, error } = await sb.from('orders')
         .select('id, order_number, total_amount, created_at, status, tables(label), users(first_name, last_name)')
         .eq('session_id', sessionId)
+        .eq('status', 'completed')
         .order('created_at', { ascending: false });
 
     if (error) {
@@ -233,3 +234,4 @@ function openCloseSessionModal(sessionId) {
         loadSessions();
     });
 }
+

@@ -46,6 +46,22 @@ export interface PendingOrder {
   cancel_note?: string | null;
 }
 
+export interface OrderItemDetail {
+  id: string;
+  order_id: string;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  cancelled_quantity: number;
+  unit_price: number;
+  net_quantity: number;
+  net_subtotal: number;
+  status: 'active' | 'cancelled';
+  cancel_reason?: string | null;
+  cancel_note?: string | null;
+  created_at?: string;
+}
+
 export interface GlobalContextType {
   user: User | null;
   setUser: (user: User | null) => void;

@@ -1,5 +1,5 @@
 ﻿import { supabase } from '../lib/supabase';
-import { CartItem, Product, Table, User, ServerSession, PendingOrder, PaymentMethod } from '../types';
+import { CartItem, Product, Table, User, ServerSession, PendingOrder, PaymentMethod, OrderItemDetail } from '../types';
 import { PRODUITS } from '../data/produits';
 
 export interface OrderHistoryItem {
@@ -198,6 +198,7 @@ export const apiService = {
     const { data, error } = await supabase
       .from('tables')
       .select('id, label, capacity, is_active')
+      .eq('is_active', true)
       .order('label', { ascending: true });
 
     if (error) {
@@ -560,6 +561,12 @@ export const apiService = {
       if (msg.includes('product_not_found')) {
         return { data: null, error: new Error('Produit introuvable dans la base') };
       }
+      if (msg.includes('session_required')) {
+        return { data: null, error: new Error('Session requise pour confirmer la commande') };
+      }
+      if (msg.includes('invalid_payment_method')) {
+        return { data: null, error: new Error('Mode de paiement invalide') };
+      }
       const missingFn =
         msg.toLowerCase().includes('create_order_with_items') && msg.toLowerCase().includes('does not exist');
       if (!missingFn) {
@@ -631,5 +638,77 @@ export const apiService = {
 
     const normalized = (data ?? []).map(item => normalizeOrder(item));
     return { data: normalized, error: null };
+  },
+
+  getOrderItems: async (orderId: string, userId?: string | null) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return { data: [], error: null };
+    }
+
+    const { data, error } = await supabase.rpc('get_order_items_by_order', {
+      p_order_id: orderId,
+      p_user_id: userId ?? null,
+    });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const items: OrderItemDetail[] =
+      (data ?? []).map((row: any) => ({
+        id: row.id,
+        order_id: row.order_id,
+        product_id: row.product_id,
+        product_name: row.product_name,
+        quantity: Number(row.quantity ?? 0),
+        cancelled_quantity: Number(row.cancelled_quantity ?? 0),
+        unit_price: Number(row.unit_price ?? 0),
+        net_quantity: Number(row.net_quantity ?? 0),
+        net_subtotal: Number(row.net_subtotal ?? 0),
+        status: row.status ?? 'active',
+        cancel_reason: row.cancel_reason ?? null,
+        cancel_note: row.cancel_note ?? null,
+        created_at: row.created_at,
+      })) ?? [];
+
+    return { data: items, error: null };
+  },
+
+  cancelOrderItem: async (input: {
+    orderItemId: string;
+    userId: string;
+    cancelQty?: number | null;
+    reason?: string | null;
+    note?: string | null;
+  }) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      return { data: null, error: null };
+    }
+
+    const { data, error } = await supabase.rpc('cancel_order_item', {
+      p_order_item_id: input.orderItemId,
+      p_user_id: input.userId,
+      p_cancel_qty: input.cancelQty ?? null,
+      p_reason: input.reason ?? null,
+      p_note: input.note ?? null,
+    });
+
+    if (error) {
+      const msg = String(error.message || '');
+      if (msg.includes('item_already_cancelled')) {
+        return { data: null, error: new Error('Article deja annule') };
+      }
+      if (msg.includes('invalid_cancel_qty')) {
+        return { data: null, error: new Error('Quantite invalide') };
+      }
+      if (msg.includes('order_not_completed')) {
+        return { data: null, error: new Error('Commande non validee') };
+      }
+      return { data: null, error: new Error(msg || 'Erreur annulation article') };
+    }
+
+    return { data, error: null };
   },
 };

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -20,7 +20,7 @@ if ($email === '' || $password === '' || $firstName === '' || $lastName === '') 
 }
 
 $supabaseUrl = getenv('SUPABASE_URL') ?: 'https://gxweofraymbcwqxbcsln.supabase.co';
-$serviceRoleKey = getenv('SUPABASE_SERVICE_ROLE_KEY') ?: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4d2VvZnJheW1iY3dxeGJjc2xuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxMzA5NjQsImV4cCI6MjA4NTcwNjk2NH0.7bNRXmW0mcnvGT9DhowlzvM3EpWZ_cX-sX2MQc_Z3hk';
+$serviceRoleKey = getenv('SUPABASE_SERVICE_ROLE_KEY') ?: '';
 
 if ($supabaseUrl === '' || $serviceRoleKey === '') {
     http_response_code(500);
@@ -189,3 +189,7 @@ if ($insertStatus !== 201) {
 }
 
 echo json_encode(['success' => true]);
+
+
+
+

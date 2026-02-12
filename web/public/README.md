@@ -1,10 +1,10 @@
-# CaféPOS - Système de Gestion Professionnel pour Cafés
+﻿# CaféPOS - Système de Gestion Professionnel pour Cafés
 
-## 🎯 Vue d'ensemble
+## ðŸŽ¯ Vue d'ensemble
 
 CaféPOS est une application web moderne de gestion pour cafés et restaurants, construite avec HTML, CSS, JavaScript et Supabase (PostgreSQL).
 
-## 🚀 Démarrage Rapide
+## ðŸš€ Démarrage Rapide
 
 ### 1. Accès à l'application
 
@@ -15,7 +15,7 @@ L'application est accessible via `/login.html`
 **Email:** `admin@cafe.local`  
 **Mot de passe:** `password123`
 
-## 📋 Fonctionnalités
+## ðŸ“‹ Fonctionnalités
 
 ### Dashboard
 - **Statistiques en temps réel**: Total des ordres, revenus, utilisateurs actifs, produits
@@ -24,64 +24,64 @@ L'application est accessible via `/login.html`
 - **Données actualisables**: Synchronisation avec Supabase
 
 ### Produits
-- ✅ Liste complète des produits
-- ✅ Recherche en temps réel
-- ✅ Ajouter/Modifier/Supprimer des produits
-- ✅ Gestion des stocks
-- ✅ Catégorisation
-- ✅ Prix et coûts
-- ✅ Statut (Disponible/Indisponible)
+- âœ… Liste complète des produits
+- âœ… Recherche en temps réel
+- âœ… Ajouter/Modifier/Supprimer des produits
+- âœ… Gestion des stocks
+- âœ… Catégorisation
+- âœ… Prix et coûts
+- âœ… Statut (Disponible/Indisponible)
 
 ### Utilisateurs (Serveurs & Admins)
-- ✅ Liste des utilisateurs
-- ✅ Recherche
-- ✅ Ajouter/Modifier/Supprimer des utilisateurs
-- ✅ Rôles (Serveur/Admin)
-- ✅ Codes PIN 4 chiffres
-- ✅ Statuts (Actif/Inactif)
+- âœ… Liste des utilisateurs
+- âœ… Recherche
+- âœ… Ajouter/Modifier/Supprimer des utilisateurs
+- âœ… Rôles (Serveur/Admin)
+- âœ… Codes PIN 4 chiffres
+- âœ… Statuts (Actif/Inactif)
 
 ### Ordres
-- ✅ Historique complet des ordres
-- ✅ Statuts des ordres
-- ✅ Total par commande
-- ✅ Créateur de l'ordre
-- ✅ Chronologie
+- âœ… Historique complet des ordres
+- âœ… Statuts des ordres
+- âœ… Total par commande
+- âœ… Créateur de l'ordre
+- âœ… Chronologie
 
 ### Rapports & Analyses
-- ✅ Revenus quotidiens (graphique barres)
-- ✅ Stock par catégorie (graphique pie)
-- ✅ Statistiques globales
-- ✅ Analyses détaillées
+- âœ… Revenus quotidiens (graphique barres)
+- âœ… Stock par catégorie (graphique pie)
+- âœ… Statistiques globales
+- âœ… Analyses détaillées
 
-## 📁 Structure des Fichiers
+## ðŸ“ Structure des Fichiers
 
 ```
 public/
-├── index.html                 # Page principale
-├── login.html                 # Page de connexion
-├── dashboard.html             # Page dashboard
-├── css/
-│   ├── styles.css            # Styles globaux
-│   ├── login.css             # Styles login
-│   ├── sidebar.css           # Navigation sidebar
-│   ├── forms.css             # Formulaires & modales
-│   ├── tables.css            # Tableaux
-│   └── charts.css            # Graphiques
-├── js/
-│   ├── config.js             # Configuration Supabase
-│   ├── auth.js               # Authentification
-│   ├── app.js                # Logique principale
-│   ├── login.js              # Login handler
-│   └── pages/
-│       ├── dashboard.js      # Dashboard
-│       ├── products.js       # Gestion produits
-│       ├── users.js          # Gestion utilisateurs
-│       ├── orders.js         # Ordres
-│       └── reports.js        # Rapports
-└── README.md                 # Cette fichier
+â”œâ”€â”€ index.html                 # Page principale
+â”œâ”€â”€ login.html                 # Page de connexion
+â”œâ”€â”€ dashboard.html             # Page dashboard
+â”œâ”€â”€ css/
+â”‚   â”œâ”€â”€ styles.css            # Styles globaux
+â”‚   â”œâ”€â”€ login.css             # Styles login
+â”‚   â”œâ”€â”€ sidebar.css           # Navigation sidebar
+â”‚   â”œâ”€â”€ forms.css             # Formulaires & modales
+â”‚   â”œâ”€â”€ tables.css            # Tableaux
+â”‚   â””â”€â”€ charts.css            # Graphiques
+â”œâ”€â”€ js/
+â”‚   â”œâ”€â”€ config.js             # Configuration Supabase
+â”‚   â”œâ”€â”€ auth.js               # Authentification
+â”‚   â”œâ”€â”€ app.js                # Logique principale
+â”‚   â”œâ”€â”€ login.js              # Login handler
+â”‚   â””â”€â”€ pages/
+â”‚       â”œâ”€â”€ dashboard.js      # Dashboard
+â”‚       â”œâ”€â”€ products.js       # Gestion produits
+â”‚       â”œâ”€â”€ users.js          # Gestion utilisateurs
+â”‚       â”œâ”€â”€ orders.js         # Ordres
+â”‚       â””â”€â”€ reports.js        # Rapports
+â””â”€â”€ README.md                 # Cette fichier
 ```
 
-## 🗄️ Base de Données Supabase
+## ðŸ—„ï¸ Base de Données Supabase
 
 ### Tables
 
@@ -97,14 +97,14 @@ public/
 **work_hours**
 - id, user_id, date, hours, created_at
 
-## 🔐 Authentification
+## ðŸ” Authentification
 
 - Email et mot de passe stockés dans Supabase
 - Tokens générés pour les sessions
 - localStorage utilisé pour maintenir les sessions
 - Déconnexion automatique si token invalide
 
-## 🎨 Thème Visuel
+## ðŸŽ¨ Thème Visuel
 
 ### Couleurs
 - **Primaire**: Orange (#f97316)
@@ -117,7 +117,7 @@ public/
 - **Police**: System UI (Segoe UI, Roboto, etc.)
 - **Contraste**: Texte blanc sur fond sombre
 
-## 🛠️ Développement
+## ðŸ› ï¸ Développement
 
 ### Ajouter une Nouvelle Page
 
@@ -140,21 +140,21 @@ const { data, error } = await supabase
 
 Modifier les fichiers CSS dans `/public/css/`
 
-## 📱 Responsive
+## ðŸ“± Responsive
 
 L'application est responsive et adaptée pour:
 - Desktop (1920px+)
 - Tablette (768px - 1024px)
 - Mobile (< 768px)
 
-## 🔔 Notifications
+## ðŸ”” Notifications
 
 Utiliser `showNotification()`:
 ```javascript
 showNotification('Message', 'success');  // success, danger, warning, info
 ```
 
-## 📊 Modales
+## ðŸ“Š Modales
 
 Utiliser `showModal()`:
 ```javascript
@@ -163,27 +163,27 @@ showModal('Titre', 'Contenu HTML', [
 ]);
 ```
 
-## 🚀 Déploiement sur Vercel
+## ðŸš€ Déploiement sur Vercel
 
 1. Connecter le repo GitHub
 2. Configurer les variables d'environnement Supabase
 3. Déployer automatiquement
 
-## 📝 Notes
+## ðŸ“ Notes
 
 - Tous les horaires sont en UTC
 - Les dates utilisent le format ISO 8601
 - Les montants sont en EUR
 - Les PINs sont toujours 4 chiffres
 
-## 🐛 Debugging
+## ðŸ› Debugging
 
 Console logs disponibles avec le préfixe `[v0]`:
 ```javascript
 console.log('[v0] Message:', data);
 ```
 
-## ✅ Checklist d'Implémentation
+## âœ… Checklist d'Implémentation
 
 - [x] Page de login
 - [x] Dashboard avec statistiques
@@ -198,9 +198,10 @@ console.log('[v0] Message:', data);
 - [x] Responsive design
 - [x] Supabase intégration
 
-## 📞 Support
+## ðŸ“ž Support
 
 Pour l'aide, consultez:
 - Supabase Docs: https://supabase.com/docs
 - JavaScript API: https://developer.mozilla.org
 - Vercel Docs: https://vercel.com/docs
+

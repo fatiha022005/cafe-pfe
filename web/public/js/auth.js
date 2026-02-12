@@ -5,6 +5,19 @@ const checkSession = async () => {
 
     if (!session && !isLoginPage) return window.location.href = 'login.html';
     if (session && isLoginPage) return window.location.href = 'index.html';
+
+    if (session && !isLoginPage) {
+        const { data: profile, error } = await sb
+            .from('users')
+            .select('role, is_active')
+            .eq('auth_user_id', session.user.id)
+            .single();
+
+        if (error || profile?.role !== 'admin' || profile?.is_active === false) {
+            await sb.auth.signOut();
+            return window.location.href = 'login.html';
+        }
+    }
     
     return session;
 };

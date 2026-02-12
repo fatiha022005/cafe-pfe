@@ -1,4 +1,4 @@
-let tableCache = new Map();
+﻿let tableCache = new Map();
 
 window.renderTables = async function() {
     const container = document.getElementById('main-view');
@@ -176,3 +176,4 @@ function bindTableEvents() {
         }
     };
 }
+

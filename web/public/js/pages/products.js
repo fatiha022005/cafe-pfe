@@ -33,10 +33,11 @@ window.renderProducts = async function() {
                         <th>Catégorie</th>
                         <th class="text-center">Prix</th>
                         <th class="text-center">Stock</th>
+                        <th class="text-center">Dispo</th>
                         <th class="text-center">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="p-list"><tr><td colspan="5" class="loading-row">Chargement...</td></tr></tbody>
+                <tbody id="p-list"><tr><td colspan="6" class="loading-row">Chargement...</td></tr></tbody>
             </table>
         </div>
         
@@ -73,8 +74,27 @@ function getModalTemplate() {
                         <input type="number" step="0.5" name="price" required class="input-std">
                     </div>
                     <div class="field">
+                        <label>Coût (MAD)</label>
+                        <input type="number" step="0.5" name="cost" class="input-std" value="0">
+                    </div>
+                    <div class="field">
                         <label>Stock</label>
                         <input type="number" name="stock_quantity" required class="input-std">
+                    </div>
+                    <div class="field">
+                        <label>Stock min</label>
+                        <input type="number" name="min_stock_alert" class="input-std" value="10">
+                    </div>
+                    <div class="field full">
+                        <label>Disponible</label>
+                        <select name="is_available" class="input-std">
+                            <option value="true">Disponible</option>
+                            <option value="false">Indisponible</option>
+                        </select>
+                    </div>
+                    <div class="field full">
+                        <label>Description</label>
+                        <input type="text" name="description" class="input-std" placeholder="Optionnel">
                     </div>
                 </div>
                 <div class="modal-actions">
@@ -111,13 +131,18 @@ function renderList(products) {
                     ${toNumber(p.stock_quantity)}
                 </span>
             </td>
+            <td class="text-center">
+                <span class="badge ${p.is_available === false ? 'badge-danger' : 'badge-success'}">
+                    ${p.is_available === false ? 'Indispo' : 'OK'}
+                </span>
+            </td>
             <td class="text-center actions-center">
                 <button class="btn-icon-sm edit-btn" data-id="${p.id}" aria-label="Modifier">${ICON_EDIT}</button>
                 <button class="btn-icon-sm delete-btn" data-id="${p.id}" aria-label="Supprimer">${ICON_DELETE}</button>
             </td>
         </tr>
     `).join('');
-    document.getElementById('p-list').innerHTML = html || '<tr><td colspan="5" class="text-center">Aucun résultat</td></tr>';
+    document.getElementById('p-list').innerHTML = html || '<tr><td colspan="6" class="text-center">Aucun résultat</td></tr>';
 }
 
 function bindProductEvents() {
@@ -167,8 +192,13 @@ function bindProductEvents() {
         delete data.id;
         if (data.name) data.name = data.name.trim();
         if (data.category) data.category = data.category.trim();
+        if (data.description) data.description = data.description.trim();
         data.price = toNumber(data.price);
+        data.cost = toNumber(data.cost);
         data.stock_quantity = parseInt(data.stock_quantity, 10) || 0;
+        data.min_stock_alert = parseInt(data.min_stock_alert, 10) || 10;
+        data.is_available = data.is_available === 'true';
+        if (!data.description) data.description = null;
 
         const { error } = id 
             ? await sb.from('products').update(data).eq('id', id)
