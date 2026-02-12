@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DrawerScreenProps } from '@react-navigation/drawer';
 import { useFocusEffect } from '@react-navigation/native';
 import { useGlobal } from '../context/GlobalContext';
-import { apiService, PendingOrderItem } from '../services/api';
+import { apiService, PendingOrderItem, PendingOrderLineItem } from '../services/api';
 import { DrawerParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
@@ -36,6 +36,15 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   const [cancelNote, setCancelNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [targetOrder, setTargetOrder] = useState<PendingOrderItem | null>(null);
+  const [itemsModalVisible, setItemsModalVisible] = useState(false);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+  const [orderItems, setOrderItems] = useState<PendingOrderLineItem[]>([]);
+  const [itemsOrder, setItemsOrder] = useState<PendingOrderItem | null>(null);
+  const [damageModalVisible, setDamageModalVisible] = useState(false);
+  const [damageNote, setDamageNote] = useState('');
+  const [damageSubmitting, setDamageSubmitting] = useState(false);
+  const [targetItem, setTargetItem] = useState<PendingOrderLineItem | null>(null);
   const { user } = useGlobal();
   const { theme } = useTheme();
   const styles = getStyles(theme);
@@ -109,6 +118,71 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     navigation.navigate('Paiement', { orderId: order.id, total: order.total_amount });
   };
 
+  const fetchOrderItems = async (orderId: string) => {
+    if (!user?.id) {
+      return;
+    }
+    setItemsLoading(true);
+    setItemsError(null);
+    const { data, error } = await apiService.getPendingOrderItems(orderId, user.id);
+    if (error) {
+      console.error('Pending order items fetch error', error);
+      setOrderItems([]);
+      setItemsError("Impossible de charger les articles.");
+    } else {
+      setOrderItems(data ?? []);
+    }
+    setItemsLoading(false);
+  };
+
+  const openItemsModal = (order: PendingOrderItem) => {
+    setItemsOrder(order);
+    setOrderItems([]);
+    setItemsError(null);
+    setItemsModalVisible(true);
+    fetchOrderItems(order.id);
+  };
+
+  const openDamageModal = (item: PendingOrderLineItem) => {
+    setTargetItem(item);
+    setDamageNote('');
+    setDamageModalVisible(true);
+  };
+
+  const handleRemoveDamage = async () => {
+    if (!itemsOrder || !targetItem || !user?.id) {
+      setDamageModalVisible(false);
+      return;
+    }
+    const note = damageNote.trim();
+    if (!note) {
+      Alert.alert('Erreur', 'Merci d\'indiquer la raison du degat.');
+      return;
+    }
+
+    setDamageSubmitting(true);
+    const { data, error } = await apiService.removePendingOrderItemDamage({
+      orderId: itemsOrder.id,
+      itemId: targetItem.id,
+      userId: user.id,
+      reasonNote: note,
+    });
+    setDamageSubmitting(false);
+
+    if (error) {
+      Alert.alert('Erreur', error.message || 'Impossible de supprimer l\'article.');
+      return;
+    }
+
+    setDamageModalVisible(false);
+    await fetchOrderItems(itemsOrder.id);
+    await fetchOrders({ refresh: true });
+
+    if (data?.status === 'cancelled') {
+      setItemsModalVisible(false);
+    }
+  };
+
   const renderItem: ListRenderItem<PendingOrderItem> = ({ item }) => (
     <View style={styles.card}>
       <View style={{ flex: 1 }}>
@@ -126,6 +200,9 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         <View style={styles.actionRow}>
           <TouchableOpacity style={styles.payBtn} onPress={() => handlePay(item)}>
             <Text style={styles.actionText}>PAYER</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.detailBtn} onPress={() => openItemsModal(item)}>
+            <Text style={styles.actionTextAlt}>DETAILS</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.cancelBtn} onPress={() => openCancelModal(item)}>
             <Text style={styles.actionTextAlt}>ANNULER</Text>
@@ -208,6 +285,99 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         </View>
       </Modal>
 
+      <Modal
+        transparent
+        visible={itemsModalVisible}
+        animationType="fade"
+        onRequestClose={() => setItemsModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Articles en attente</Text>
+            <Text style={styles.modalSub}>
+              {itemsOrder ? `Commande #${itemsOrder.order_number}` : 'Commande'}
+            </Text>
+
+            {itemsLoading ? (
+              <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />
+            ) : (
+              <FlatList
+                data={orderItems}
+                keyExtractor={item => item.id}
+                ListEmptyComponent={<Text style={styles.emptyText}>Aucun article.</Text>}
+                renderItem={({ item }) => (
+                  <View style={styles.itemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemTitle}>{item.product_name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {item.quantity} x {item.unit_price.toFixed(2)} DH
+                      </Text>
+                    </View>
+                    <Text style={styles.itemTotal}>{item.subtotal.toFixed(2)} DH</Text>
+                    <TouchableOpacity style={styles.damageBtn} onPress={() => openDamageModal(item)}>
+                      <Text style={styles.damageText}>DEGAT</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            )}
+
+            {itemsError && <Text style={styles.errorText}>{itemsError}</Text>}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalBtn} onPress={() => setItemsModalVisible(false)}>
+                <Text style={styles.modalBtnText}>Fermer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={damageModalVisible}
+        animationType="fade"
+        onRequestClose={() => setDamageModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Retirer l'article</Text>
+            <Text style={styles.modalSub}>
+              {targetItem ? `${targetItem.product_name} (x${targetItem.quantity})` : ''}
+            </Text>
+            <Text style={styles.modalSub}>Indiquer la raison du degat</Text>
+            <View style={styles.reasonRow}>
+              <TouchableOpacity style={styles.reasonBtn} onPress={() => setDamageNote('Casse')}>
+                <Text style={styles.reasonText}>Casse</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.reasonBtn} onPress={() => setDamageNote('Renverse')}>
+                <Text style={styles.reasonText}>Renverse</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.noteInput}
+              placeholder="Raison detaillee"
+              placeholderTextColor={theme.textMuted}
+              value={damageNote}
+              onChangeText={setDamageNote}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalBtn} onPress={() => setDamageModalVisible(false)} disabled={damageSubmitting}>
+                <Text style={styles.modalBtnText}>Retour</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnPrimary, !damageNote.trim() && styles.modalBtnDisabled]}
+                onPress={handleRemoveDamage}
+                disabled={!damageNote.trim() || damageSubmitting}
+              >
+                <Text style={styles.modalBtnTextPrimary}>Confirmer</Text>
+              </TouchableOpacity>
+            </View>
+            {damageSubmitting && <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />}
+          </View>
+        </View>
+      </Modal>
+
       <BottomBar current="Commandes" />
     </SafeAreaView>
   );
@@ -252,6 +422,14 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
       paddingVertical: 6,
       paddingHorizontal: 10,
       borderRadius: 8,
+    },
+    detailBtn: {
+      backgroundColor: theme.surfaceGlass,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.border,
     },
     cancelBtn: {
       backgroundColor: theme.surfaceGlass,
@@ -322,4 +500,22 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
     },
     modalBtnText: { color: theme.textMain, fontWeight: '600' },
     modalBtnTextPrimary: { color: '#fff', fontWeight: '700' },
+    itemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    itemTitle: { color: theme.textMain, fontWeight: '700', fontSize: 14 },
+    itemMeta: { color: theme.textMuted, fontSize: 12, marginTop: 2 },
+    itemTotal: { color: theme.primary, fontWeight: '700', fontSize: 13 },
+    damageBtn: {
+      backgroundColor: theme.warning,
+      paddingVertical: 6,
+      paddingHorizontal: 8,
+      borderRadius: 8,
+    },
+    damageText: { color: '#fff', fontWeight: '700', fontSize: 11 },
   });

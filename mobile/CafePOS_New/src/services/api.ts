@@ -21,6 +21,15 @@ export interface OrderHistoryItem {
 
 export interface PendingOrderItem extends PendingOrder {}
 
+export interface PendingOrderLineItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+}
+
 interface LoginUserRow {
   id: string;
   first_name: string;
@@ -345,6 +354,76 @@ export const apiService = {
 
     const normalized = (rpcData ?? []).map(item => normalizePending(item));
     return { data: normalized, error: null };
+  },
+
+  getPendingOrderItems: async (orderId: string | null | undefined, userId: string | null | undefined) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      return { data: [], error: null };
+    }
+
+    if (!orderId || !userId) {
+      return { data: [], error: new Error('Parametres manquants') };
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_pending_order_items', {
+      p_order_id: orderId,
+      p_user_id: userId,
+    });
+    if (rpcError) {
+      return { data: null, error: rpcError };
+    }
+
+    const items: PendingOrderLineItem[] =
+      (rpcData ?? []).map((item: any) => ({
+        id: item.id,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: Number(item.quantity ?? 0),
+        unit_price: Number(item.unit_price ?? 0),
+        subtotal: Number(item.subtotal ?? 0),
+      })) ?? [];
+
+    return { data: items, error: null };
+  },
+
+  removePendingOrderItemDamage: async (input: {
+    orderId: string;
+    itemId: string;
+    userId: string;
+    reasonNote?: string | null;
+  }) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return { data: null, error: null };
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('remove_pending_order_item_damage', {
+      p_order_id: input.orderId,
+      p_item_id: input.itemId,
+      p_user_id: input.userId,
+      p_reason_note: input.reasonNote ?? null,
+    });
+
+    if (rpcError) {
+      const msg = String(rpcError.message || '');
+      if (msg.includes('order_not_found_or_not_pending')) {
+        return { data: null, error: new Error('Commande introuvable ou deja cloturee') };
+      }
+      if (msg.includes('item_not_found')) {
+        return { data: null, error: new Error('Article introuvable') };
+      }
+      if (msg.includes('user_required')) {
+        return { data: null, error: new Error('Utilisateur manquant') };
+      }
+      return { data: null, error: new Error(msg || 'Erreur lors de la suppression') };
+    }
+
+    const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as
+      | { order_id?: string; order_number?: number; total_amount?: number; status?: string }
+      | null
+      | undefined;
+    return { data: row ?? null, error: null };
   },
 
   completePendingOrder: async (input: {

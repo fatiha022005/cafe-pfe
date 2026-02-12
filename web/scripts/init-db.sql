@@ -26,9 +26,12 @@ DROP FUNCTION IF EXISTS public.get_open_session(uuid);
 DROP FUNCTION IF EXISTS public.close_server_session(uuid);
 DROP FUNCTION IF EXISTS public.close_server_session(uuid, numeric);
 DROP FUNCTION IF EXISTS public.adjust_stock(uuid, uuid, int, text, text);
+DROP FUNCTION IF EXISTS public.get_pending_order_items(uuid, uuid);
+DROP FUNCTION IF EXISTS public.remove_pending_order_item_damage(uuid, uuid, uuid, text);
 
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb);
 DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb, uuid);
+DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb, uuid, numeric, numeric);
 
 -- 1.2 Drop helper + trigger function
 DROP FUNCTION IF EXISTS public.is_admin();
@@ -53,6 +56,7 @@ END $$;
 
 -- 1.4 Drop tables in dependency order
 DROP TABLE IF EXISTS public.stock_logs CASCADE;
+DROP TABLE IF EXISTS public.order_item_damages CASCADE;
 DROP TABLE IF EXISTS public.order_items CASCADE;
 DROP TABLE IF EXISTS public.orders CASCADE;
 DROP TABLE IF EXISTS public.sessions_serveurs CASCADE;
@@ -131,7 +135,9 @@ CREATE TABLE public.orders (
     session_id UUID,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0,
-    payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'other')),
+    payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'other', 'split')),
+    cash_amount DECIMAL(10, 2),
+    card_amount DECIMAL(10, 2),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     CONSTRAINT orders_order_number_key UNIQUE (order_number)
@@ -164,7 +170,19 @@ CREATE TABLE public.order_items (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
--- 2.7 STOCK LOGS
+-- 2.7 ORDER ITEM DAMAGES
+CREATE TABLE public.order_item_damages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    order_item_id UUID,
+    product_id UUID NOT NULL REFERENCES public.products(id),
+    user_id UUID REFERENCES public.users(id),
+    quantity INT NOT NULL CHECK (quantity > 0),
+    reason_note TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 2.8 STOCK LOGS
 CREATE TABLE public.stock_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
@@ -186,6 +204,8 @@ CREATE INDEX idx_orders_user ON public.orders(user_id);
 CREATE INDEX idx_orders_table ON public.orders(table_id);
 CREATE INDEX idx_orders_session ON public.orders(session_id);
 CREATE INDEX idx_orders_date ON public.orders(created_at);
+CREATE INDEX idx_order_item_damages_order ON public.order_item_damages(order_id);
+CREATE INDEX idx_order_item_damages_product ON public.order_item_damages(product_id);
 CREATE INDEX idx_stock_logs_product ON public.stock_logs(product_id);
 
 -- ============================================================
@@ -224,6 +244,7 @@ ALTER TABLE public.tables ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sessions_serveurs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_item_damages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_logs ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
@@ -388,6 +409,29 @@ FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
 CREATE POLICY "Admins can delete items" ON public.order_items
 FOR DELETE USING (public.is_admin());
 
+-- ORDER ITEM DAMAGES (admin only)
+DO $$
+BEGIN
+    IF to_regclass('public.order_item_damages') IS NOT NULL THEN
+        DROP POLICY IF EXISTS "Admins can read item damages" ON public.order_item_damages;
+        DROP POLICY IF EXISTS "Admins can insert item damages" ON public.order_item_damages;
+        DROP POLICY IF EXISTS "Admins can update item damages" ON public.order_item_damages;
+        DROP POLICY IF EXISTS "Admins can delete item damages" ON public.order_item_damages;
+    END IF;
+END $$;
+
+CREATE POLICY "Admins can read item damages" ON public.order_item_damages
+FOR SELECT USING (public.is_admin());
+
+CREATE POLICY "Admins can insert item damages" ON public.order_item_damages
+FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update item damages" ON public.order_item_damages
+FOR UPDATE USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can delete item damages" ON public.order_item_damages
+FOR DELETE USING (public.is_admin());
+
 -- STOCK LOGS (admin only)
 DO $$
 BEGIN
@@ -547,7 +591,9 @@ CREATE OR REPLACE FUNCTION public.create_order_with_items(
     p_table_id uuid,
     p_payment_method text,
     p_items jsonb,
-    p_session_id uuid DEFAULT NULL
+    p_session_id uuid DEFAULT NULL,
+    p_cash_amount numeric DEFAULT NULL,
+    p_card_amount numeric DEFAULT NULL
 )
 RETURNS TABLE (
     id uuid,
@@ -576,6 +622,10 @@ BEGIN
         RAISE EXCEPTION 'items_required';
     END IF;
 
+    IF p_payment_method NOT IN ('cash', 'card', 'other', 'split') THEN
+        RAISE EXCEPTION 'invalid_payment_method';
+    END IF;
+
     IF EXISTS (
         SELECT 1
         FROM jsonb_array_elements(p_items) AS item
@@ -598,8 +648,39 @@ BEGIN
     INTO v_total
     FROM jsonb_array_elements(p_items) AS item;
 
-    INSERT INTO public.orders (user_id, table_id, status, total_amount, payment_method, session_id)
-    VALUES (p_user_id, p_table_id, 'completed', v_total, p_payment_method, p_session_id)
+    IF p_payment_method = 'split' THEN
+        IF p_cash_amount IS NULL OR p_card_amount IS NULL THEN
+            RAISE EXCEPTION 'split_amount_required';
+        END IF;
+        IF p_cash_amount < 0 OR p_card_amount < 0 THEN
+            RAISE EXCEPTION 'invalid_split_amount';
+        END IF;
+        IF abs((p_cash_amount + p_card_amount) - v_total) > 0.01 THEN
+            RAISE EXCEPTION 'split_amount_mismatch';
+        END IF;
+    END IF;
+
+    INSERT INTO public.orders (user_id, table_id, status, total_amount, payment_method, session_id, cash_amount, card_amount)
+    VALUES (
+        p_user_id,
+        p_table_id,
+        'completed',
+        v_total,
+        p_payment_method,
+        p_session_id,
+        CASE
+            WHEN p_payment_method = 'cash' THEN v_total
+            WHEN p_payment_method = 'split' THEN p_cash_amount
+            WHEN p_payment_method = 'card' THEN 0
+            ELSE NULL
+        END,
+        CASE
+            WHEN p_payment_method = 'card' THEN v_total
+            WHEN p_payment_method = 'split' THEN p_card_amount
+            WHEN p_payment_method = 'cash' THEN 0
+            ELSE NULL
+        END
+    )
     RETURNING * INTO v_order;
 
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
@@ -630,7 +711,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.create_order_with_items(uuid, uuid, text, jsonb, uuid) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_order_with_items(uuid, uuid, text, jsonb, uuid, numeric, numeric) TO anon, authenticated;
 
 -- 8.6 Orders history by user
 CREATE OR REPLACE FUNCTION public.get_orders_by_user(p_user_id uuid)
@@ -660,7 +741,124 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_orders_by_user(uuid) TO anon, authenticated;
 
--- 8.7 Adjust stock + log (admin only)
+-- 8.7 Pending order items (mobile)
+CREATE OR REPLACE FUNCTION public.get_pending_order_items(
+    p_order_id uuid,
+    p_user_id uuid
+)
+RETURNS TABLE (
+    id uuid,
+    product_id uuid,
+    product_name text,
+    quantity int,
+    unit_price numeric,
+    subtotal numeric
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT oi.id,
+           oi.product_id,
+           p.name AS product_name,
+           oi.quantity,
+           oi.unit_price,
+           oi.subtotal
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    JOIN public.products p ON p.id = oi.product_id
+    WHERE o.id = p_order_id
+      AND o.user_id = p_user_id
+      AND o.status = 'pending'
+    ORDER BY oi.created_at ASC;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_pending_order_items(uuid, uuid) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.remove_pending_order_item_damage(
+    p_order_id uuid,
+    p_item_id uuid,
+    p_user_id uuid,
+    p_reason_note text DEFAULT NULL
+)
+RETURNS TABLE (
+    order_id uuid,
+    order_number int,
+    total_amount numeric,
+    status text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order public.orders%ROWTYPE;
+    v_item public.order_items%ROWTYPE;
+    v_remaining int;
+BEGIN
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders o
+    WHERE o.id = p_order_id
+      AND o.user_id = p_user_id
+      AND o.status = 'pending'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'order_not_found_or_not_pending';
+    END IF;
+
+    SELECT * INTO v_item
+    FROM public.order_items oi
+    WHERE oi.id = p_item_id
+      AND oi.order_id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'item_not_found';
+    END IF;
+
+    DELETE FROM public.order_items
+    WHERE id = p_item_id;
+
+    INSERT INTO public.order_item_damages (order_id, order_item_id, product_id, user_id, quantity, reason_note)
+    VALUES (p_order_id, v_item.id, v_item.product_id, p_user_id, v_item.quantity, p_reason_note);
+
+    SELECT COUNT(*) INTO v_remaining
+    FROM public.order_items
+    WHERE order_id = p_order_id;
+
+    IF v_remaining = 0 THEN
+        UPDATE public.orders
+        SET status = 'cancelled',
+            total_amount = 0,
+            cancel_reason = 'damage',
+            cancel_note = COALESCE(NULLIF(p_reason_note, ''), 'Tous les articles supprimes pour degat'),
+            cancelled_at = now()
+        WHERE id = p_order_id
+        RETURNING * INTO v_order;
+    ELSE
+        UPDATE public.orders o
+        SET total_amount = (
+            SELECT COALESCE(SUM(oi.quantity * oi.unit_price), 0)
+            FROM public.order_items oi
+            WHERE oi.order_id = p_order_id
+        )
+        WHERE o.id = p_order_id
+        RETURNING * INTO v_order;
+    END IF;
+
+    RETURN QUERY
+    SELECT v_order.id, v_order.order_number, v_order.total_amount, v_order.status;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.remove_pending_order_item_damage(uuid, uuid, uuid, text) TO anon, authenticated;
+
+-- 8.8 Adjust stock + log (admin only)
 CREATE OR REPLACE FUNCTION public.adjust_stock(
     p_user_id uuid,
     p_product_id uuid,
