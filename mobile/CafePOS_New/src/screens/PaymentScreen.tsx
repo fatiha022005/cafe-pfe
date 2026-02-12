@@ -1,114 +1,327 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+﻿import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, TextInput } from 'react-native';
+import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useGlobal } from '../context/GlobalContext';
 import { apiService } from '../services/api';
-import { RootStackParamList } from '../types';
+import { PaymentMethod, RootStackParamList } from '../types';
+import { useTheme } from '../context/ThemeContext';
+import TopBar from '../components/TopBar';
+import QuickNav from '../components/QuickNav';
+import BottomBar from '../components/BottomBar';
 
 type PaymentScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Paiement'>;
+type PaymentScreenRouteProp = RouteProp<RootStackParamList, 'Paiement'>;
 
 interface Props {
   navigation: PaymentScreenNavigationProp;
+  route: PaymentScreenRouteProp;
 }
 
-export default function PaymentScreen({ navigation }: Props) {
-  const { cart, clearOrder, activeTable, user } = useGlobal();
+export default function PaymentScreen({ navigation, route }: Props) {
+  const { cart, clearOrder, activeTable, user, activeSession, setActiveSession } = useGlobal();
   const [loading, setLoading] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [cashInput, setCashInput] = useState('');
+  const [cardInput, setCardInput] = useState('');
+  const { theme } = useTheme();
+  const styles = getStyles(theme);
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const orderId = route.params?.orderId;
+  const total = orderId ? Number(route.params?.total ?? 0) : cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const handleFinalize = async (modeLabel: 'ESPECES' | 'CB') => {
-    if (cart.length === 0) {
+  const parseAmount = (value: string) => {
+    const normalized = value.replace(',', '.').trim();
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  };
+
+  const cashAmount = parseAmount(cashInput);
+  const cardAmount = parseAmount(cardInput);
+  const splitTotal = cashAmount + cardAmount;
+  const splitDiff = total - splitTotal;
+  const splitValid = splitMode && Number.isFinite(cashAmount) && Number.isFinite(cardAmount) && Math.abs(splitDiff) <= 0.01;
+  const splitInvalid = splitMode && (!Number.isFinite(cashAmount) || !Number.isFinite(cardAmount));
+
+  const toggleSplit = () => {
+    if (splitMode) {
+      setSplitMode(false);
+      setCashInput('');
+      setCardInput('');
+      return;
+    }
+    setSplitMode(true);
+    setCashInput(total.toFixed(2));
+    setCardInput('0');
+  };
+
+  const finalizePayment = async (input: {
+    paymentMethod: PaymentMethod;
+    modeLabel: string;
+    cashAmount?: number | null;
+    cardAmount?: number | null;
+  }) => {
+    if (!user?.id) {
+      Alert.alert('Erreur', 'Utilisateur manquant');
+      navigation.replace('Login');
+      return;
+    }
+
+    if (!orderId && cart.length === 0) {
       Alert.alert('Erreur', 'Panier vide');
       return;
     }
 
-    const paymentMethod = modeLabel === 'CB' ? 'card' : 'cash';
+    const { data: latestSession, error: sessionError } = await apiService.getOpenSession(user.id);
+    if (sessionError) {
+      Alert.alert('Erreur', 'Impossible de verifier la session');
+      return;
+    }
+
+    if (!latestSession?.id) {
+      setActiveSession(null);
+      Alert.alert('Session requise', 'Ouvrez une session de caisse avant de vendre.');
+      navigation.navigate('Session');
+      return;
+    }
+
+    if (!activeSession || activeSession.id !== latestSession.id) {
+      setActiveSession(latestSession);
+    }
+
+    const paymentMethod = input.paymentMethod;
     setLoading(true);
+
+    if (orderId) {
+      const { data, error } = await apiService.completePendingOrder({
+        orderId,
+        userId: user.id,
+        paymentMethod,
+        sessionId: latestSession.id,
+        cashAmount: input.cashAmount ?? null,
+        cardAmount: input.cardAmount ?? null,
+      });
+      setLoading(false);
+
+      if (error || !data) {
+        const msg = error?.message || 'Impossible de finaliser la commande';
+        Alert.alert('Erreur', msg);
+        return;
+      }
+
+      const modeLine =
+        paymentMethod === 'split'
+          ? `Espèces: ${Number(input.cashAmount ?? 0).toFixed(2)} DH\nCarte: ${Number(input.cardAmount ?? 0).toFixed(
+              2
+            )} DH`
+          : `Mode: ${input.modeLabel}`;
+      Alert.alert('Paiement Reussi', `Montant: ${total.toFixed(2)} DH\n${modeLine}\nCommande #${data.order_number}`, [
+        {
+          text: 'OK',
+          onPress: () => {
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Main', params: { screen: 'Commandes' } }],
+            });
+          },
+        },
+      ]);
+      return;
+    }
+
     const { data, error } = await apiService.createOrder({
-      userId: user?.id ?? null,
+      userId: user.id,
+      sessionId: latestSession.id,
       items: cart,
       paymentMethod,
-      tableNumber: activeTable?.id ? Number(activeTable.id) : null,
+      tableId: activeTable?.id ?? null,
+      cashAmount: input.cashAmount ?? null,
+      cardAmount: input.cardAmount ?? null,
     });
     setLoading(false);
 
     if (error || !data) {
-      Alert.alert('Erreur', 'Impossible de sauvegarder la commande');
+      const msg = error?.message || 'Impossible de sauvegarder la commande';
+      Alert.alert('Erreur', msg);
       return;
     }
 
-    console.log(`Payment ${paymentMethod} validated for table ${activeTable?.id ?? 'N/A'}`);
-
-    Alert.alert(
-      'Paiement Reussi',
-      `Montant: ${total.toFixed(2)} DH\nMode: ${modeLabel}\nCommande #${data.order_number}`,
-      [
-        {
-          text: 'OK',
-          onPress: () => {
-            clearOrder();
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Tables' }],
-            });
-          },
+    const modeLine =
+      paymentMethod === 'split'
+        ? `Espèces: ${Number(input.cashAmount ?? 0).toFixed(2)} DH\nCarte: ${Number(input.cardAmount ?? 0).toFixed(2)} DH`
+        : `Mode: ${input.modeLabel}`;
+    Alert.alert('Paiement Reussi', `Montant: ${total.toFixed(2)} DH\n${modeLine}\nCommande #${data.order_number}`, [
+      {
+        text: 'OK',
+        onPress: () => {
+          clearOrder();
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Tables' }],
+          });
         },
-      ]
-    );
+      },
+    ]);
+  };
+
+  const handleFinalize = async (modeLabel: 'ESPECES' | 'CB') => {
+    const paymentMethod: PaymentMethod = modeLabel === 'CB' ? 'card' : 'cash';
+    await finalizePayment({ paymentMethod, modeLabel });
+  };
+
+  const handleSplitFinalize = async () => {
+    if (!splitValid) {
+      Alert.alert('Erreur', 'Verifier les montants de paiement.');
+      return;
+    }
+    await finalizePayment({
+      paymentMethod: 'split',
+      modeLabel: 'SPLIT',
+      cashAmount,
+      cardAmount,
+    });
   };
 
   return (
     <View style={styles.container}>
+      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <QuickNav current={orderId ? 'Commandes' : 'Vente'} />
+
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.icon}>{'<-'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => Alert.alert('Info', 'Fonctionnalite Split a venir')}>
-          <Text style={styles.split}>DIVISER</Text>
+        <TouchableOpacity onPress={toggleSplit}>
+          <Text style={[styles.split, splitMode && styles.splitActive]}>{splitMode ? 'ANNULER' : 'DIVISER'}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.amountContainer}>
         <Text style={styles.amountText}>{total.toFixed(2)} DH</Text>
         <Text style={styles.subtext}>Total a payer</Text>
-        {activeTable && <Text style={styles.tableInfo}>Table {activeTable.id}</Text>}
+        {activeTable && !orderId && <Text style={styles.tableInfo}>Table {activeTable.label}</Text>}
       </View>
 
-      <TouchableOpacity style={styles.payBtn} onPress={() => handleFinalize('ESPECES')} disabled={loading}>
+      {splitMode && (
+        <View style={styles.splitBox}>
+          <Text style={styles.splitTitle}>Paiement partage</Text>
+          <View style={styles.splitRow}>
+            <View style={styles.splitField}>
+              <Text style={styles.splitLabel}>Especes</Text>
+              <TextInput
+                style={styles.splitInput}
+                value={cashInput}
+                onChangeText={setCashInput}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor={theme.textMuted}
+              />
+            </View>
+            <View style={styles.splitField}>
+              <Text style={styles.splitLabel}>Carte</Text>
+              <TextInput
+                style={styles.splitInput}
+                value={cardInput}
+                onChangeText={setCardInput}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor={theme.textMuted}
+              />
+            </View>
+          </View>
+          <Text style={[styles.splitHint, splitValid ? styles.splitHintOk : styles.splitHintWarn]}>
+            {splitInvalid ? 'Montant invalide' : `Reste: ${splitDiff.toFixed(2)} DH`}
+          </Text>
+          <TouchableOpacity
+            style={[styles.payBtn, styles.splitPayBtn, (!splitValid || loading) && styles.payBtnDisabled]}
+            onPress={handleSplitFinalize}
+            disabled={!splitValid || loading}
+          >
+            <Text style={[styles.payIcon, styles.splitPayIcon]}>SPLIT</Text>
+            <Text style={[styles.payText, styles.splitPayText]}>VALIDER PAIEMENT</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <TouchableOpacity
+        style={[styles.payBtn, splitMode && styles.payBtnDisabled]}
+        onPress={() => handleFinalize('ESPECES')}
+        disabled={loading || splitMode}
+      >
         <Text style={styles.payIcon}>CASH</Text>
         <Text style={styles.payText}>ESPECES</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.payBtn} onPress={() => handleFinalize('CB')} disabled={loading}>
+      <TouchableOpacity
+        style={[styles.payBtn, splitMode && styles.payBtnDisabled]}
+        onPress={() => handleFinalize('CB')}
+        disabled={loading || splitMode}
+      >
         <Text style={styles.payIcon}>CB</Text>
         <Text style={styles.payText}>CARTE BANCAIRE</Text>
       </TouchableOpacity>
 
-      {loading && <ActivityIndicator size="small" color="#4CAF50" style={{ marginTop: 10 }} />}
+      {loading && <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />}
+      <BottomBar current={orderId ? 'Commandes' : 'Vente'} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212', padding: 20, paddingTop: 50 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  icon: { color: 'white', fontSize: 20 },
-  split: { color: '#4CAF50', fontWeight: 'bold', fontSize: 16, marginTop: 5 },
-  amountContainer: { alignItems: 'center', marginVertical: 60 },
-  amountText: { color: 'white', fontSize: 48, fontWeight: 'bold' },
-  subtext: { color: '#888', fontSize: 16, marginTop: 10 },
-  tableInfo: { color: '#4CAF50', fontSize: 18, marginTop: 5, fontWeight: 'bold' },
-  payBtn: {
-    flexDirection: 'row',
-    backgroundColor: '#1E1E1E',
-    padding: 25,
-    borderRadius: 12,
-    marginBottom: 20,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  payIcon: { fontSize: 16, marginRight: 20, color: 'white' },
-  payText: { color: 'white', fontWeight: 'bold', fontSize: 18, letterSpacing: 1 },
-});
+const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.bgBody, padding: 16, paddingTop: 50, paddingBottom: 90 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+    icon: { color: theme.textMain, fontSize: 20 },
+    split: { color: theme.primary, fontWeight: '700', fontSize: 16, marginTop: 5 },
+    splitActive: { color: theme.warning },
+    amountContainer: { alignItems: 'center', marginVertical: 40 },
+    amountText: { color: theme.textMain, fontSize: 48, fontWeight: '700' },
+    subtext: { color: theme.textMuted, fontSize: 16, marginTop: 10 },
+    tableInfo: { color: theme.accent, fontSize: 18, marginTop: 5, fontWeight: '700' },
+    splitBox: {
+      backgroundColor: theme.surfaceGlass,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 20,
+    },
+    splitTitle: { color: theme.textMain, fontWeight: '700', fontSize: 14, marginBottom: 12 },
+    splitRow: { flexDirection: 'row', gap: 12 },
+    splitField: { flex: 1 },
+    splitLabel: { color: theme.textMuted, fontSize: 12, marginBottom: 6 },
+    splitInput: {
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      color: theme.textMain,
+      backgroundColor: theme.bgSurface,
+    },
+    splitHint: { marginTop: 10, fontSize: 12 },
+    splitHintOk: { color: theme.accent },
+    splitHintWarn: { color: theme.warning },
+    payBtn: {
+      flexDirection: 'row',
+      backgroundColor: theme.surfaceCardStrong,
+      padding: 22,
+      borderRadius: 12,
+      marginBottom: 20,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    splitPayBtn: {
+      marginTop: 14,
+      marginBottom: 0,
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    payBtnDisabled: { opacity: 0.5 },
+    payIcon: { fontSize: 16, marginRight: 20, color: theme.textMain },
+    payText: { color: theme.textMain, fontWeight: '700', fontSize: 18, letterSpacing: 1 },
+    splitPayIcon: { color: '#fff' },
+    splitPayText: { color: '#fff' },
+  });

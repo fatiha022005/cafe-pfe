@@ -1,4 +1,4 @@
-export interface Product {
+﻿export interface Product {
   id: string | number;
   name: string;
   price: number;
@@ -11,15 +11,39 @@ export interface CartItem extends Product {
 }
 
 export interface Table {
-  id: number | string;
-  name: string;
-  status: 'libre' | 'occupe' | 'reserve';
+  id: string;
+  label: string;
+  capacity: number;
+  is_active: boolean | null;
+}
+
+export interface ServerSession {
+  id: string;
+  user_id: string;
+  start_time: string;
+  end_time?: string | null;
+  total_collecte?: number | null;
 }
 
 export interface User {
   id: string;
   name: string;
   role?: 'admin' | 'server';
+}
+
+export type PaymentMethod = 'cash' | 'card' | 'other' | 'split';
+
+export interface PendingOrder {
+  id: string;
+  order_number: number;
+  total_amount: number;
+  created_at: string;
+  status: 'pending' | 'completed' | 'cancelled';
+  table_id?: string | null;
+  table_label?: string | null;
+  session_id?: string | null;
+  cancel_reason?: 'damage' | 'loss' | null;
+  cancel_note?: string | null;
 }
 
 export interface GlobalContextType {
@@ -31,6 +55,8 @@ export interface GlobalContextType {
   addToCart: (product: Product) => void;
   removeFromCart: (id: string | number) => void;
   clearOrder: () => void;
+  activeSession: ServerSession | null;
+  setActiveSession: (session: ServerSession | null) => void;
 }
 
 // Navigation param lists.
@@ -39,11 +65,13 @@ export type RootStackParamList = {
   Tables: undefined;
   Main: undefined;
   Ticket: undefined;
-  Paiement: { total: number };
+  Paiement: { total?: number; orderId?: string };
+  Session: undefined;
 };
 
 export type DrawerParamList = {
   Vente: undefined;
+  Commandes: undefined;
   History: undefined;
   Settings: undefined;
 };

@@ -1,0 +1,325 @@
+﻿import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  ListRenderItem,
+  Modal,
+  TextInput,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { DrawerScreenProps } from '@react-navigation/drawer';
+import { useFocusEffect } from '@react-navigation/native';
+import { useGlobal } from '../context/GlobalContext';
+import { apiService, PendingOrderItem } from '../services/api';
+import { DrawerParamList } from '../types';
+import { useTheme } from '../context/ThemeContext';
+import TopBar from '../components/TopBar';
+import QuickNav from '../components/QuickNav';
+import BottomBar from '../components/BottomBar';
+
+type OrdersScreenProps = DrawerScreenProps<DrawerParamList, 'Commandes'>;
+
+type CancelReason = 'damage' | 'loss' | null;
+
+export default function OrdersScreen({ navigation }: OrdersScreenProps) {
+  const [orders, setOrders] = useState<PendingOrderItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [cancelReason, setCancelReason] = useState<CancelReason>(null);
+  const [cancelNote, setCancelNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [targetOrder, setTargetOrder] = useState<PendingOrderItem | null>(null);
+  const { user } = useGlobal();
+  const { theme } = useTheme();
+  const styles = getStyles(theme);
+
+  useEffect(() => {
+    fetchOrders();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchOrders({ refresh: true });
+    }, [user?.id])
+  );
+
+  const fetchOrders = async (opts?: { refresh?: boolean }) => {
+    if (opts?.refresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    const { data, error } = await apiService.getPendingOrders(user?.id);
+    if (!error && data) {
+      setOrders(data);
+    } else {
+      console.error('Pending orders fetch error', error);
+      setOrders([]);
+      setError('Impossible de charger les commandes.');
+    }
+
+    if (opts?.refresh) {
+      setRefreshing(false);
+    } else {
+      setLoading(false);
+    }
+  };
+
+  const openCancelModal = (order: PendingOrderItem) => {
+    setTargetOrder(order);
+    setCancelReason(null);
+    setCancelNote('');
+    setModalVisible(true);
+  };
+
+  const handleCancel = async () => {
+    if (!targetOrder || !user?.id) {
+      setModalVisible(false);
+      return;
+    }
+    if (!cancelReason) {
+      return;
+    }
+    setSubmitting(true);
+    const { error } = await apiService.cancelPendingOrder({
+      orderId: targetOrder.id,
+      userId: user.id,
+      reason: cancelReason,
+      note: cancelNote.trim() || null,
+    });
+    setSubmitting(false);
+    if (error) {
+      Alert.alert('Erreur', error.message || "Erreur lors de l'annulation");
+      return;
+    }
+    setModalVisible(false);
+    fetchOrders({ refresh: true });
+  };
+
+  const handlePay = (order: PendingOrderItem) => {
+    navigation.navigate('Paiement', { orderId: order.id, total: order.total_amount });
+  };
+
+  const renderItem: ListRenderItem<PendingOrderItem> = ({ item }) => (
+    <View style={styles.card}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.tableText}>
+          {item.table_label ? `Table ${item.table_label}` : 'Vente Directe'} - Commande #{item.order_number}
+        </Text>
+        <Text style={styles.dateText}>
+          {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          {' - '}
+          {new Date(item.created_at).toLocaleDateString()}
+        </Text>
+      </View>
+      <View style={styles.cardRight}>
+        <Text style={styles.totalText}>{item.total_amount.toFixed(2)} DH</Text>
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.payBtn} onPress={() => handlePay(item)}>
+            <Text style={styles.actionText}>PAYER</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.cancelBtn} onPress={() => openCancelModal(item)}>
+            <Text style={styles.actionTextAlt}>ANNULER</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <QuickNav current="Commandes" />
+
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.openDrawer()}>
+          <Text style={styles.menuIcon}>MENU</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>Commandes en attente</Text>
+        <TouchableOpacity onPress={() => fetchOrders({ refresh: true })}>
+          <Text style={styles.refresh}>REFRESH</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loading && orders.length === 0 ? (
+        <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 50 }} />
+      ) : (
+        <FlatList
+          data={orders}
+          keyExtractor={item => item.id.toString()}
+          renderItem={renderItem}
+          ListEmptyComponent={<Text style={styles.emptyText}>Aucune commande en attente.</Text>}
+          refreshing={refreshing}
+          onRefresh={() => fetchOrders({ refresh: true })}
+        />
+      )}
+
+      {error && <Text style={styles.errorText}>{error}</Text>}
+
+      <Modal transparent visible={modalVisible} animationType="fade" onRequestClose={() => setModalVisible(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Annuler la commande</Text>
+            <Text style={styles.modalSub}>Choisir une raison</Text>
+            <View style={styles.reasonRow}>
+              <TouchableOpacity
+                style={[styles.reasonBtn, cancelReason === 'damage' && styles.reasonBtnActive]}
+                onPress={() => setCancelReason('damage')}
+              >
+                <Text style={styles.reasonText}>Degat (casse/renverse)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reasonBtn, cancelReason === 'loss' && styles.reasonBtnActive]}
+                onPress={() => setCancelReason('loss')}
+              >
+                <Text style={styles.reasonText}>Perte (client parti)</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.noteInput}
+              placeholder="Note (optionnel)"
+              placeholderTextColor={theme.textMuted}
+              value={cancelNote}
+              onChangeText={setCancelNote}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalBtn} onPress={() => setModalVisible(false)} disabled={submitting}>
+                <Text style={styles.modalBtnText}>Retour</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnPrimary, !cancelReason && styles.modalBtnDisabled]}
+                onPress={handleCancel}
+                disabled={!cancelReason || submitting}
+              >
+                <Text style={styles.modalBtnTextPrimary}>Confirmer</Text>
+              </TouchableOpacity>
+            </View>
+            {submitting && <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />}
+          </View>
+        </View>
+      </Modal>
+
+      <BottomBar current="Commandes" />
+    </SafeAreaView>
+  );
+}
+
+const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.bgBody, paddingHorizontal: 10, paddingBottom: 90 },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      padding: 16,
+      alignItems: 'center',
+      backgroundColor: theme.surfaceGlass,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      borderRadius: 14,
+      marginBottom: 8,
+    },
+    menuIcon: { color: theme.textMain, fontSize: 14 },
+    title: { color: theme.textMain, fontSize: 18, fontWeight: '700' },
+    refresh: { fontSize: 12, color: theme.accent },
+    card: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      padding: 16,
+      backgroundColor: theme.surfaceCardStrong,
+      marginHorizontal: 5,
+      marginTop: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      gap: 12,
+    },
+    cardRight: { alignItems: 'flex-end', gap: 8 },
+    tableText: { color: theme.textMain, fontWeight: '700', fontSize: 15, marginBottom: 5 },
+    dateText: { color: theme.textMuted, fontSize: 12 },
+    totalText: { color: theme.primary, fontWeight: '700', fontSize: 18 },
+    actionRow: { flexDirection: 'row', gap: 8 },
+    payBtn: {
+      backgroundColor: theme.primary,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+    },
+    cancelBtn: {
+      backgroundColor: theme.surfaceGlass,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    actionText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+    actionTextAlt: { color: theme.textMain, fontWeight: '700', fontSize: 12 },
+    emptyText: { color: theme.textMuted, textAlign: 'center', marginTop: 50 },
+    errorText: { color: theme.warning, textAlign: 'center', marginTop: 10 },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.4)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    modalCard: {
+      width: '100%',
+      backgroundColor: theme.surfaceCardStrong,
+      borderRadius: 16,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    modalTitle: { color: theme.textMain, fontSize: 18, fontWeight: '700' },
+    modalSub: { color: theme.textMuted, marginTop: 6 },
+    reasonRow: { gap: 10, marginTop: 14 },
+    reasonBtn: {
+      backgroundColor: theme.surfaceGlass,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    reasonBtnActive: {
+      backgroundColor: theme.accentSoft,
+      borderColor: theme.accent,
+    },
+    reasonText: { color: theme.textMain, fontWeight: '600' },
+    noteInput: {
+      marginTop: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 12,
+      padding: 12,
+      color: theme.textMain,
+      backgroundColor: theme.bgSurface,
+    },
+    modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 },
+    modalBtn: {
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      backgroundColor: theme.surfaceGlass,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    modalBtnPrimary: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    modalBtnDisabled: {
+      opacity: 0.5,
+    },
+    modalBtnText: { color: theme.textMain, fontWeight: '600' },
+    modalBtnTextPrimary: { color: '#fff', fontWeight: '700' },
+  });

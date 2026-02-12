@@ -1,5 +1,5 @@
-import React, { createContext, useState, useContext, ReactNode } from 'react';
-import { Product, CartItem, Table, User, GlobalContextType } from '../types';
+﻿import React, { createContext, useState, useContext, ReactNode } from 'react';
+import { Product, CartItem, Table, User, GlobalContextType, ServerSession } from '../types';
 
 const GlobalContext = createContext<GlobalContextType | undefined>(undefined);
 
@@ -11,6 +11,7 @@ export const GlobalProvider: React.FC<GlobalProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [activeTable, setActiveTable] = useState<Table | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [activeSession, setActiveSession] = useState<ServerSession | null>(null);
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -32,7 +33,20 @@ export const GlobalProvider: React.FC<GlobalProviderProps> = ({ children }) => {
   };
 
   return (
-    <GlobalContext.Provider value={{ user, setUser, activeTable, setActiveTable, cart, addToCart, removeFromCart, clearOrder }}>
+    <GlobalContext.Provider
+      value={{
+        user,
+        setUser,
+        activeTable,
+        setActiveTable,
+        cart,
+        addToCart,
+        removeFromCart,
+        clearOrder,
+        activeSession,
+        setActiveSession,
+      }}
+    >
       {children}
     </GlobalContext.Provider>
   );

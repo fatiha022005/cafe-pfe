@@ -1,5 +1,5 @@
-import { supabase } from '../lib/supabase';
-import { CartItem, Product, User } from '../types';
+﻿import { supabase } from '../lib/supabase';
+import { CartItem, Product, Table, User, ServerSession, PendingOrder, PaymentMethod } from '../types';
 import { PRODUITS } from '../data/produits';
 
 export interface OrderHistoryItem {
@@ -7,11 +7,19 @@ export interface OrderHistoryItem {
   order_number: number;
   total_amount: number;
   created_at: string;
-  payment_method: 'cash' | 'card' | 'other' | null;
+  payment_method: PaymentMethod | null;
   status?: 'pending' | 'completed' | 'cancelled';
   user_id?: string | null;
-  table_number?: number | null;
+  table_id?: string | null;
+  table_label?: string | null;
+  session_id?: string | null;
+  cancel_reason?: 'damage' | 'loss' | null;
+  cancel_note?: string | null;
+  cash_amount?: number | null;
+  card_amount?: number | null;
 }
+
+export interface PendingOrderItem extends PendingOrder {}
 
 interface LoginUserRow {
   id: string;
@@ -30,7 +38,8 @@ const mockOrders = (): OrderHistoryItem[] => [
     created_at: new Date().toISOString(),
     payment_method: 'cash',
     status: 'completed',
-    table_number: 5,
+    table_id: null,
+    table_label: 'T5',
   },
   {
     id: '2',
@@ -39,7 +48,8 @@ const mockOrders = (): OrderHistoryItem[] => [
     created_at: new Date(Date.now() - 3600000).toISOString(),
     payment_method: 'card',
     status: 'completed',
-    table_number: 2,
+    table_id: null,
+    table_label: 'T2',
   },
   {
     id: '3',
@@ -48,9 +58,30 @@ const mockOrders = (): OrderHistoryItem[] => [
     created_at: new Date(Date.now() - 7200000).toISOString(),
     payment_method: 'cash',
     status: 'completed',
-    table_number: null,
+    table_id: null,
+    table_label: null,
   },
 ];
+
+const mockPendingOrders = (): PendingOrderItem[] => [
+  {
+    id: 'p1',
+    order_number: 201,
+    total_amount: 120.0,
+    created_at: new Date(Date.now() - 1800000).toISOString(),
+    status: 'pending',
+    table_id: 'T3',
+    table_label: 'T3',
+  },
+];
+
+const mockTables = (): Table[] =>
+  Array.from({ length: 12 }, (_, i) => ({
+    id: String(i + 1),
+    label: `T${i + 1}`,
+    capacity: 2,
+    is_active: true,
+  }));
 
 const normalizeOrder = (order: any): OrderHistoryItem => ({
   id: order.id,
@@ -60,8 +91,32 @@ const normalizeOrder = (order: any): OrderHistoryItem => ({
   payment_method: order.payment_method ?? null,
   status: order.status,
   user_id: order.user_id ?? null,
-  table_number: order.table_number ?? null,
+  table_id: order.table_id ?? null,
+  table_label: order.table_label ?? order.tables?.label ?? null,
+  session_id: order.session_id ?? null,
+  cancel_reason: order.cancel_reason ?? null,
+  cancel_note: order.cancel_note ?? null,
+  cash_amount: order.cash_amount ?? null,
+  card_amount: order.card_amount ?? null,
 });
+
+const normalizePending = (order: any): PendingOrderItem => ({
+  id: order.id,
+  order_number: Number(order.order_number ?? 0),
+  total_amount: Number(order.total_amount ?? 0),
+  created_at: order.created_at,
+  status: order.status ?? 'pending',
+  table_id: order.table_id ?? null,
+  table_label: order.table_label ?? order.tables?.label ?? null,
+  session_id: order.session_id ?? null,
+  cancel_reason: order.cancel_reason ?? null,
+  cancel_note: order.cancel_note ?? null,
+});
+
+const toUser = (row: LoginUserRow): User => {
+  const name = `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Utilisateur';
+  return { id: row.id, name, role: row.role };
+};
 
 export const apiService = {
   loginWithPin: async (pin: string) => {
@@ -71,6 +126,15 @@ export const apiService = {
         return { data: { id: 'S01', name: 'Ahmed', role: 'server' } as User, error: null };
       }
       return { data: null, error: new Error('PIN incorrect') };
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('login_with_pin', { p_pin: pin });
+    if (!rpcError) {
+      const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as LoginUserRow | null | undefined;
+      if (!row || row.is_active === false) {
+        return { data: null, error: new Error('PIN incorrect ou utilisateur inactif') };
+      }
+      return { data: toUser(row), error: null };
     }
 
     const { data, error } = await supabase
@@ -86,9 +150,7 @@ export const apiService = {
       return { data: null, error: new Error('PIN incorrect ou utilisateur inactif') };
     }
 
-    const row = data as LoginUserRow;
-    const name = `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Utilisateur';
-    return { data: { id: row.id, name, role: row.role } as User, error: null };
+    return { data: toUser(data as LoginUserRow), error: null };
   },
 
   getProducts: async () => {
@@ -118,11 +180,251 @@ export const apiService = {
     return { data: products, error: null };
   },
 
+  getTables: async () => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return { data: mockTables(), error: null };
+    }
+
+    const { data, error } = await supabase
+      .from('tables')
+      .select('id, label, capacity, is_active')
+      .order('label', { ascending: true });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const tables: Table[] =
+      data?.map(item => ({
+        id: item.id,
+        label: item.label,
+        capacity: Number(item.capacity ?? 0),
+        is_active: item.is_active ?? true,
+      })) ?? [];
+
+    return { data: tables, error: null };
+  },
+
+  openSession: async (userId: string | null | undefined) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return {
+        data: {
+          id: 'local-session',
+          user_id: userId ?? 'local',
+          start_time: new Date().toISOString(),
+          end_time: null,
+          total_collecte: 0,
+        } as ServerSession,
+        error: null,
+      };
+    }
+
+    if (!userId) {
+      return { data: null, error: new Error('Utilisateur manquant') };
+    }
+
+    const { data, error } = await supabase.rpc('open_server_session', {
+      p_user_id: userId,
+    });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const row = (Array.isArray(data) ? data[0] : data) as ServerSession | null | undefined;
+    return { data: row ?? null, error: row ? null : new Error('Session non creee') };
+  },
+
+  closeSession: async (sessionId: string | null | undefined) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return { data: null, error: null };
+    }
+
+    if (!sessionId) {
+      return { data: null, error: new Error('Session manquante') };
+    }
+
+    const { data, error } = await supabase.rpc('close_server_session', {
+      p_session_id: sessionId,
+    });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const row = (Array.isArray(data) ? data[0] : data) as ServerSession | null | undefined;
+    return { data: row ?? null, error: null };
+  },
+
+  getOpenSession: async (userId: string | null | undefined) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      return { data: null, error: null };
+    }
+
+    if (!userId) {
+      return { data: null, error: new Error('Utilisateur manquant') };
+    }
+
+    const { data, error } = await supabase.rpc('get_open_session', { p_user_id: userId });
+    if (error) {
+      return { data: null, error };
+    }
+
+    const row = (Array.isArray(data) ? data[0] : data) as ServerSession | null | undefined;
+    return { data: row ?? null, error: null };
+  },
+
+  createOrAppendPendingOrder: async (input: {
+    userId?: string | null;
+    sessionId?: string | null;
+    items: CartItem[];
+    tableId?: string | null;
+  }) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const row = mockPendingOrders()[0];
+      return { data: row, error: null };
+    }
+
+    const itemsPayload = input.items.map(item => ({
+      product_id: String(item.id),
+      quantity: item.quantity,
+      unit_price: item.price,
+    }));
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('upsert_pending_order_with_items', {
+      p_user_id: input.userId ?? null,
+      p_table_id: input.tableId ?? null,
+      p_items: itemsPayload,
+      p_session_id: input.sessionId ?? null,
+    });
+
+    if (!rpcError) {
+      const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as PendingOrderItem | null | undefined;
+      if (!row) {
+        return { data: null, error: new Error('Commande non creee') };
+      }
+      return { data: normalizePending(row), error: null };
+    }
+
+    const msg = String(rpcError.message || '');
+    if (msg.includes('insufficient_stock')) {
+      return { data: null, error: new Error('Stock insuffisant pour cette commande') };
+    }
+    if (msg.includes('items_required')) {
+      return { data: null, error: new Error('Aucun article selectionne') };
+    }
+    if (msg.includes('product_not_found')) {
+      return { data: null, error: new Error('Produit introuvable dans la base') };
+    }
+    if (msg.includes('session_required')) {
+      return { data: null, error: new Error('Session requise pour confirmer la commande') };
+    }
+
+    return { data: null, error: new Error(msg || 'Erreur RPC upsert_pending_order_with_items') };
+  },
+
+  getPendingOrders: async (userId: string | undefined) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      return { data: mockPendingOrders(), error: null };
+    }
+
+    if (!userId) {
+      return { data: [], error: null };
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_pending_orders', { p_user_id: userId });
+    if (rpcError) {
+      return { data: null, error: rpcError };
+    }
+
+    const normalized = (rpcData ?? []).map(item => normalizePending(item));
+    return { data: normalized, error: null };
+  },
+
+  completePendingOrder: async (input: {
+    orderId: string;
+    userId: string;
+    paymentMethod: PaymentMethod;
+    sessionId?: string | null;
+    cashAmount?: number | null;
+    cardAmount?: number | null;
+  }) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return { data: null, error: null };
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('complete_pending_order', {
+      p_order_id: input.orderId,
+      p_user_id: input.userId,
+      p_payment_method: input.paymentMethod,
+      p_session_id: input.sessionId ?? null,
+      p_cash_amount: input.cashAmount ?? null,
+      p_card_amount: input.cardAmount ?? null,
+    });
+
+    if (rpcError) {
+      const msg = String(rpcError.message || '');
+      if (msg.includes('order_not_found_or_not_pending')) {
+        return { data: null, error: new Error('Commande introuvable ou deja cloturee') };
+      }
+      if (msg.includes('invalid_payment_method')) {
+        return { data: null, error: new Error('Mode de paiement invalide') };
+      }
+      return { data: null, error: new Error(msg || 'Erreur lors du paiement') };
+    }
+
+    const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as OrderHistoryItem | null | undefined;
+    return { data: row ? normalizeOrder(row) : null, error: null };
+  },
+
+  cancelPendingOrder: async (input: {
+    orderId: string;
+    userId: string;
+    reason: 'damage' | 'loss';
+    note?: string | null;
+  }) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return { data: null, error: null };
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('cancel_pending_order', {
+      p_order_id: input.orderId,
+      p_user_id: input.userId,
+      p_reason: input.reason,
+      p_note: input.note ?? null,
+    });
+
+    if (rpcError) {
+      const msg = String(rpcError.message || '');
+      if (msg.includes('order_not_found_or_not_pending')) {
+        return { data: null, error: new Error('Commande introuvable ou deja cloturee') };
+      }
+      if (msg.includes('invalid_reason')) {
+        return { data: null, error: new Error('Raison invalide') };
+      }
+      return { data: null, error: new Error(msg || 'Erreur lors de l\'annulation') };
+    }
+
+    const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as PendingOrderItem | null | undefined;
+    return { data: row ? normalizePending(row) : null, error: null };
+  },
+
   createOrder: async (input: {
     userId?: string | null;
+    sessionId?: string | null;
     items: CartItem[];
-    paymentMethod: 'cash' | 'card' | 'other';
-    tableNumber?: number | null;
+    paymentMethod: PaymentMethod;
+    tableId?: string | null;
+    cashAmount?: number | null;
+    cardAmount?: number | null;
   }) => {
     const total = input.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
@@ -136,10 +438,54 @@ export const apiService = {
           created_at: new Date().toISOString(),
           payment_method: input.paymentMethod,
           status: 'completed',
-          table_number: input.tableNumber ?? null,
+          table_id: input.tableId ?? null,
+          table_label: null,
+          session_id: input.sessionId ?? null,
+          cash_amount: input.cashAmount ?? null,
+          card_amount: input.cardAmount ?? null,
         } as OrderHistoryItem,
         error: null,
       };
+    }
+
+    const itemsPayload = input.items.map(item => ({
+      product_id: String(item.id),
+      quantity: item.quantity,
+      unit_price: item.price,
+    }));
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('create_order_with_items', {
+      p_user_id: input.userId ?? null,
+      p_table_id: input.tableId ?? null,
+      p_payment_method: input.paymentMethod,
+      p_items: itemsPayload,
+      p_session_id: input.sessionId ?? null,
+      p_cash_amount: input.cashAmount ?? null,
+      p_card_amount: input.cardAmount ?? null,
+    });
+
+    if (!rpcError) {
+      const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as OrderHistoryItem | null | undefined;
+      if (!row) {
+        return { data: null, error: new Error('Order creation failed') };
+      }
+      return { data: normalizeOrder(row), error: null };
+    } else {
+      const msg = String(rpcError.message || '');
+      if (msg.includes('insufficient_stock')) {
+        return { data: null, error: new Error('Stock insuffisant pour cette commande') };
+      }
+      if (msg.includes('items_required')) {
+        return { data: null, error: new Error('Aucun article selectionne') };
+      }
+      if (msg.includes('product_not_found')) {
+        return { data: null, error: new Error('Produit introuvable dans la base') };
+      }
+      const missingFn =
+        msg.toLowerCase().includes('create_order_with_items') && msg.toLowerCase().includes('does not exist');
+      if (!missingFn) {
+        return { data: null, error: new Error(msg || 'Erreur RPC create_order_with_items') };
+      }
     }
 
     const { data: order, error: orderError } = await supabase
@@ -150,10 +496,11 @@ export const apiService = {
           status: 'completed',
           total_amount: total,
           payment_method: input.paymentMethod,
-          table_number: input.tableNumber ?? null,
+          table_id: input.tableId ?? null,
+          session_id: input.sessionId ?? null,
         },
       ])
-      .select('id, order_number, total_amount, created_at, payment_method, status, table_number')
+      .select('id, order_number, total_amount, created_at, payment_method, status, table_id, session_id')
       .single();
 
     if (orderError || !order) {
@@ -186,9 +533,15 @@ export const apiService = {
       return { data: [], error: null };
     }
 
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_orders_by_user', { p_user_id: userId });
+    if (!rpcError) {
+      const normalized = (rpcData ?? []).map(item => normalizeOrder(item));
+      return { data: normalized, error: null };
+    }
+
     const { data, error } = await supabase
       .from('orders')
-      .select('id, order_number, total_amount, created_at, payment_method, status, user_id, table_number')
+      .select('id, order_number, total_amount, created_at, payment_method, status, user_id, table_id, tables(label)')
       .eq('user_id', userId)
       .eq('status', 'completed')
       .order('created_at', { ascending: false });
