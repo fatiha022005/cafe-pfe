@@ -371,21 +371,51 @@ export const apiService = {
       p_order_id: orderId,
       p_user_id: userId,
     });
-    if (rpcError) {
+    if (!rpcError) {
+      const items: PendingOrderLineItem[] =
+        (rpcData ?? []).map((item: any) => ({
+          id: item.id,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: Number(item.quantity ?? 0),
+          unit_price: Number(item.unit_price ?? 0),
+          subtotal: Number(item.subtotal ?? 0),
+        })) ?? [];
+
+      return { data: items, error: null };
+    }
+
+    const msg = String(rpcError.message || '');
+    const lower = msg.toLowerCase();
+    const missingFn = msg.includes('get_pending_order_items') || lower.includes('does not exist');
+    if (!missingFn) {
       return { data: null, error: rpcError };
     }
 
-    const items: PendingOrderLineItem[] =
-      (rpcData ?? []).map((item: any) => ({
-        id: item.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: Number(item.quantity ?? 0),
-        unit_price: Number(item.unit_price ?? 0),
-        subtotal: Number(item.subtotal ?? 0),
-      })) ?? [];
+    const { data: fallbackData, error: fallbackError } = await supabase.rpc('get_order_items_by_order', {
+      p_order_id: orderId,
+      p_user_id: userId,
+    });
+    if (fallbackError) {
+      return { data: null, error: fallbackError };
+    }
 
-    return { data: items, error: null };
+    const fallbackItems: PendingOrderLineItem[] =
+      (fallbackData ?? []).map((item: any) => {
+        const qty = Number(item.quantity ?? item.net_quantity ?? 0);
+        const price = Number(item.unit_price ?? 0);
+        const subtotal = Number(item.subtotal ?? item.net_subtotal ?? qty * price);
+        return {
+          id: item.id,
+          product_id: item.product_id,
+          product_name: item.product_name ?? item.name ?? 'Produit',
+          quantity: qty,
+          unit_price: price,
+          subtotal,
+        };
+      }) ?? [];
+
+    return { data: fallbackItems, error: null };
   },
 
   removePendingOrderItemDamage: async (input: {

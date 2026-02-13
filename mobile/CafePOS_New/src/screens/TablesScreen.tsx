@@ -8,7 +8,6 @@ import { RootStackParamList, Table } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type TablesScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Tables'>;
 
@@ -123,7 +122,6 @@ export default function TablesScreen({ navigation }: Props) {
         </>
       )}
 
-      <BottomBar current="Tables" />
     </View>
   );
 }

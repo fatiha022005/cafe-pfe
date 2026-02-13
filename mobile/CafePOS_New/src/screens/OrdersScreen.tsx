@@ -20,7 +20,6 @@ import { DrawerParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type OrdersScreenProps = DrawerScreenProps<DrawerParamList, 'Commandes'>;
 
@@ -44,10 +43,15 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   const [damageModalVisible, setDamageModalVisible] = useState(false);
   const [damageNote, setDamageNote] = useState('');
   const [damageSubmitting, setDamageSubmitting] = useState(false);
+  const [damageError, setDamageError] = useState<string | null>(null);
   const [targetItem, setTargetItem] = useState<PendingOrderLineItem | null>(null);
   const { user } = useGlobal();
   const { theme } = useTheme();
   const styles = getStyles(theme);
+  const itemsTotal = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+  const formatDateTime = (value?: string | null) =>
+    value ? new Date(value).toLocaleString() : '--';
+  const formatSession = (value?: string | null) => (value ? value.slice(0, 8) : '--');
 
   useEffect(() => {
     fetchOrders();
@@ -67,19 +71,25 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     }
     setError(null);
 
-    const { data, error } = await apiService.getPendingOrders(user?.id);
-    if (!error && data) {
-      setOrders(data);
-    } else {
-      console.error('Pending orders fetch error', error);
+    try {
+      const { data, error } = await apiService.getPendingOrders(user?.id);
+      if (!error && data) {
+        setOrders(data);
+      } else {
+        console.error('Pending orders fetch error', error);
+        setOrders([]);
+        setError('Impossible de charger les commandes.');
+      }
+    } catch (err) {
+      console.error('Pending orders fetch error', err);
       setOrders([]);
       setError('Impossible de charger les commandes.');
-    }
-
-    if (opts?.refresh) {
-      setRefreshing(false);
-    } else {
-      setLoading(false);
+    } finally {
+      if (opts?.refresh) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -99,19 +109,25 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
       return;
     }
     setSubmitting(true);
-    const { error } = await apiService.cancelPendingOrder({
-      orderId: targetOrder.id,
-      userId: user.id,
-      reason: cancelReason,
-      note: cancelNote.trim() || null,
-    });
-    setSubmitting(false);
-    if (error) {
-      Alert.alert('Erreur', error.message || "Erreur lors de l'annulation");
-      return;
+    try {
+      const { error } = await apiService.cancelPendingOrder({
+        orderId: targetOrder.id,
+        userId: user.id,
+        reason: cancelReason,
+        note: cancelNote.trim() || null,
+      });
+      if (error) {
+        Alert.alert('Erreur', error.message || "Erreur lors de l'annulation");
+        return;
+      }
+      setModalVisible(false);
+      fetchOrders({ refresh: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      Alert.alert('Erreur', message || "Erreur lors de l'annulation");
+    } finally {
+      setSubmitting(false);
     }
-    setModalVisible(false);
-    fetchOrders({ refresh: true });
   };
 
   const handlePay = (order: PendingOrderItem) => {
@@ -124,15 +140,23 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     }
     setItemsLoading(true);
     setItemsError(null);
-    const { data, error } = await apiService.getPendingOrderItems(orderId, user.id);
-    if (error) {
-      console.error('Pending order items fetch error', error);
+    try {
+      const { data, error } = await apiService.getPendingOrderItems(orderId, user.id);
+      if (error) {
+        console.error('Pending order items fetch error', error);
+        setOrderItems([]);
+        setItemsError(error.message || "Impossible de charger les articles.");
+      } else {
+        setOrderItems(data ?? []);
+      }
+    } catch (err) {
+      console.error('Pending order items fetch error', err);
       setOrderItems([]);
-      setItemsError("Impossible de charger les articles.");
-    } else {
-      setOrderItems(data ?? []);
+      const message = err instanceof Error ? err.message : String(err);
+      setItemsError(message || "Impossible de charger les articles.");
+    } finally {
+      setItemsLoading(false);
     }
-    setItemsLoading(false);
   };
 
   const openItemsModal = (order: PendingOrderItem) => {
@@ -146,6 +170,7 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   const openDamageModal = (item: PendingOrderLineItem) => {
     setTargetItem(item);
     setDamageNote('');
+    setDamageError(null);
     setDamageModalVisible(true);
   };
 
@@ -161,25 +186,34 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     }
 
     setDamageSubmitting(true);
-    const { data, error } = await apiService.removePendingOrderItemDamage({
-      orderId: itemsOrder.id,
-      itemId: targetItem.id,
-      userId: user.id,
-      reasonNote: note,
-    });
-    setDamageSubmitting(false);
+    setDamageError(null);
+    try {
+      const { data, error } = await apiService.removePendingOrderItemDamage({
+        orderId: itemsOrder.id,
+        itemId: targetItem.id,
+        userId: user.id,
+        reasonNote: note,
+      });
 
-    if (error) {
-      Alert.alert('Erreur', error.message || 'Impossible de supprimer l\'article.');
-      return;
-    }
+      if (error) {
+        setDamageError(error.message);
+        Alert.alert('Erreur', error.message || 'Impossible de supprimer l\'article.');
+        return;
+      }
 
-    setDamageModalVisible(false);
-    await fetchOrderItems(itemsOrder.id);
-    await fetchOrders({ refresh: true });
+      setDamageModalVisible(false);
+      await fetchOrderItems(itemsOrder.id);
+      await fetchOrders({ refresh: true });
 
-    if (data?.status === 'cancelled') {
-      setItemsModalVisible(false);
+      if (data?.status === 'cancelled') {
+        setItemsModalVisible(false);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setDamageError(message || 'Erreur lors du degat.');
+      Alert.alert('Erreur', message || 'Erreur lors du degat.');
+    } finally {
+      setDamageSubmitting(false);
     }
   };
 
@@ -294,9 +328,25 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Articles en attente</Text>
-            <Text style={styles.modalSub}>
-              {itemsOrder ? `Commande #${itemsOrder.order_number}` : 'Commande'}
-            </Text>
+            <Text style={styles.modalSub}>{itemsOrder ? `Commande #${itemsOrder.order_number}` : 'Commande'}</Text>
+            {itemsOrder && (
+              <View style={styles.summaryBlock}>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryText}>
+                    {itemsOrder.table_label ? `Table ${itemsOrder.table_label}` : 'Vente Directe'}
+                  </Text>
+                  <Text style={styles.summaryText}>Total: {itemsTotal.toFixed(2)} DH</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryText}>Date: {formatDateTime(itemsOrder.created_at)}</Text>
+                  <Text style={styles.summaryText}>Serveur: {user?.name ?? '--'}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryText}>Paiement: En attente</Text>
+                  <Text style={styles.summaryText}>Session: {formatSession(itemsOrder.session_id)}</Text>
+                </View>
+              </View>
+            )}
 
             {itemsLoading ? (
               <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />
@@ -337,6 +387,7 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         transparent
         visible={damageModalVisible}
         animationType="fade"
+        presentationStyle="overFullScreen"
         onRequestClose={() => setDamageModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
@@ -373,12 +424,12 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
                 <Text style={styles.modalBtnTextPrimary}>Confirmer</Text>
               </TouchableOpacity>
             </View>
+            {damageError && <Text style={styles.errorText}>{damageError}</Text>}
             {damageSubmitting && <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />}
           </View>
         </View>
       </Modal>
 
-      <BottomBar current="Commandes" />
     </SafeAreaView>
   );
 }
@@ -460,6 +511,15 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
     },
     modalTitle: { color: theme.textMain, fontSize: 18, fontWeight: '700' },
     modalSub: { color: theme.textMuted, marginTop: 6 },
+    summaryBlock: {
+      marginTop: 8,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      gap: 6,
+    },
+    summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
+    summaryText: { color: theme.textMain, fontWeight: '600', fontSize: 12 },
     reasonRow: { gap: 10, marginTop: 14 },
     reasonBtn: {
       backgroundColor: theme.surfaceGlass,

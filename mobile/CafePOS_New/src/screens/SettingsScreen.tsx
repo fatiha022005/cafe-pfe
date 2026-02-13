@@ -10,7 +10,6 @@ import { useTheme } from '../context/ThemeContext';
 import { THEMES } from '../theme/theme';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type SettingsScreenProps = CompositeScreenProps<
   DrawerScreenProps<DrawerParamList, 'Settings'>,
@@ -89,17 +88,10 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
         />
       </View>
 
-      <Text style={styles.sectionTitle}>SYSTEME</Text>
-      <TouchableOpacity style={styles.row} onPress={() => Alert.alert('Info', 'Changement PIN')}>
-        <Text style={styles.label}>Changer le PIN de securite</Text>
-        <Text style={styles.chevron}>{'>'}</Text>
-      </TouchableOpacity>
-
       <TouchableOpacity style={styles.logout} onPress={handleLogout}>
         <Text style={styles.logoutText}>Deconnexion</Text>
       </TouchableOpacity>
 
-      <BottomBar current="Settings" />
     </View>
   );
 }

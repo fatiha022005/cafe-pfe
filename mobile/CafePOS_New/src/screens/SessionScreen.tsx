@@ -8,7 +8,6 @@ import { apiService } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type SessionScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Session'>;
 
@@ -45,7 +44,8 @@ export default function SessionScreen({ navigation }: Props) {
     const { data, error } = await apiService.openSession(user.id);
     setLoading(false);
     if (error || !data) {
-      Alert.alert('Erreur', 'Impossible d’ouvrir la session');
+      const details = error?.message ? `\n${error.message}` : '';
+      Alert.alert('Erreur', `Impossible d’ouvrir la session${details}`);
       return;
     }
     setActiveSession(data);
@@ -103,7 +103,6 @@ export default function SessionScreen({ navigation }: Props) {
       </View>
 
       {loading && <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 12 }} />}
-      <BottomBar current="Session" />
     </View>
   );
 }

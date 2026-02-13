@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
 import { DrawerScreenProps } from '@react-navigation/drawer';
@@ -11,7 +11,6 @@ import { DrawerParamList, Product, RootStackParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type GrilleScreenProps = CompositeScreenProps<
   DrawerScreenProps<DrawerParamList, 'Vente'>,
@@ -62,15 +61,6 @@ export default function GrilleScreen({ navigation }: GrilleScreenProps) {
       setLoading(false);
     }
   };
-
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    products.forEach(p => {
-      if (p.category) set.add(p.category);
-    });
-    return Array.from(set);
-  }, [products]);
-
   const handleValidate = async () => {
     if (cart.length === 0) {
       Alert.alert('Erreur', 'Le panier est vide');
@@ -130,7 +120,6 @@ export default function GrilleScreen({ navigation }: GrilleScreenProps) {
         ) : (
           <MenuGrid
             items={products}
-            categories={categories}
             onAddItem={addToCart}
             refreshing={refreshing}
             onRefresh={() => {
@@ -142,7 +131,6 @@ export default function GrilleScreen({ navigation }: GrilleScreenProps) {
       </View>
 
       <OrderSummary items={cart} onRemove={removeFromCart} onValidate={handleValidate} bottomOffset={74} />
-      <BottomBar current="Vente" />
     </View>
   );
 }
@@ -179,3 +167,7 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
     icon: { color: theme.textMain, fontSize: 14, paddingHorizontal: 10 },
     content: { flex: 1, paddingBottom: 60 },
   });
+
+
+
+

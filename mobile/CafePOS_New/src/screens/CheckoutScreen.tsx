@@ -6,7 +6,6 @@ import { RootStackParamList, CartItem } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 import { apiService } from '../services/api';
 
 type CheckoutScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Ticket'>;
@@ -50,22 +49,28 @@ export default function CheckoutScreen({ navigation }: Props) {
     }
 
     setLoading(true);
-    const { data, error } = await apiService.createOrAppendPendingOrder({
-      userId: user.id,
-      sessionId: activeSession.id,
-      tableId: activeTable.id,
-      items: cart,
-    });
-    setLoading(false);
+    try {
+      const { data, error } = await apiService.createOrAppendPendingOrder({
+        userId: user.id,
+        sessionId: activeSession.id,
+        tableId: activeTable.id,
+        items: cart,
+      });
 
-    if (error || !data) {
-      Alert.alert('Erreur', error?.message || 'Impossible de confirmer la commande');
-      return;
+      if (error || !data) {
+        Alert.alert('Erreur', error?.message || 'Impossible de confirmer la commande');
+        return;
+      }
+
+      clearOrder();
+      Alert.alert('Commande en attente', `Commande #${data.order_number} enregistree.`);
+      navigation.navigate('Main', { screen: 'Commandes' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      Alert.alert('Erreur', message || 'Impossible de confirmer la commande');
+    } finally {
+      setLoading(false);
     }
-
-    clearOrder();
-    Alert.alert('Commande en attente', `Commande #${data.order_number} enregistree.`);
-    navigation.navigate('Main', { screen: 'Commandes' });
   };
 
   const renderItem: ListRenderItem<CartItem> = ({ item }) => (
@@ -91,14 +96,17 @@ export default function CheckoutScreen({ navigation }: Props) {
         <View style={{ width: 24 }} />
       </View>
 
-      <FlatList
-        data={cart}
-        keyExtractor={item => item.id.toString()}
-        renderItem={renderItem}
-        ListEmptyComponent={<Text style={styles.emptyText}>Aucun article</Text>}
-      />
+      <View style={styles.listContainer}>
+        <FlatList
+          data={cart}
+          keyExtractor={item => item.id.toString()}
+          renderItem={renderItem}
+          ListEmptyComponent={<Text style={styles.emptyText}>Aucun article</Text>}
+          contentContainerStyle={styles.listContent}
+        />
+      </View>
 
-      <View style={styles.actionsRow}>
+      <View style={styles.actionsCard}>
         <TouchableOpacity
           style={[styles.confirmBtn, (cart.length === 0 || !activeTable) && styles.disabledBtn]}
           onPress={handleConfirmOrder}
@@ -116,14 +124,13 @@ export default function CheckoutScreen({ navigation }: Props) {
       </View>
 
       {loading && <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 10 }} />}
-      <BottomBar current="Vente" />
     </View>
   );
 }
 
 const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, paddingHorizontal: 10, paddingTop: 50, paddingBottom: 90 },
+    container: { flex: 1, backgroundColor: theme.bgBody, paddingHorizontal: 10, paddingTop: 50, paddingBottom: 24 },
     header: {
       padding: 16,
       backgroundColor: theme.surfaceGlass,
@@ -137,23 +144,32 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
     },
     backIcon: { color: theme.textMain, fontSize: 20 },
     title: { color: theme.textMain, fontSize: 20, fontWeight: '700' },
+    listContainer: { flex: 1, marginTop: 8 },
+    listContent: { paddingBottom: 10 },
     itemRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      padding: 18,
+      padding: 16,
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
       alignItems: 'center',
       backgroundColor: theme.surfaceCardStrong,
-      marginHorizontal: 5,
-      marginTop: 12,
+      marginBottom: 12,
       borderRadius: 12,
     },
     itemText: { color: theme.textMain, fontSize: 16, fontWeight: '700' },
     itemSubText: { color: theme.textMuted, fontSize: 14 },
     itemPrice: { color: theme.primary, fontWeight: '700', fontSize: 16 },
     emptyText: { color: theme.textMuted, textAlign: 'center', marginTop: 50, fontSize: 18 },
-    actionsRow: { gap: 10, paddingHorizontal: 10, marginBottom: 16 },
+    actionsCard: {
+      gap: 10,
+      padding: 12,
+      backgroundColor: theme.surfaceGlass,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 8,
+    },
     chargeBtn: {
       backgroundColor: theme.primary,
       padding: 18,

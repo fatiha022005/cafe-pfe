@@ -8,7 +8,6 @@ import { PaymentMethod, RootStackParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type PaymentScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Paiement'>;
 type PaymentScreenRouteProp = RouteProp<RootStackParamList, 'Paiement'>;
@@ -93,76 +92,81 @@ export default function PaymentScreen({ navigation, route }: Props) {
     const paymentMethod = input.paymentMethod;
     setLoading(true);
 
-    if (orderId) {
-      const { data, error } = await apiService.completePendingOrder({
-        orderId,
+    try {
+      if (orderId) {
+        const { data, error } = await apiService.completePendingOrder({
+          orderId,
+          userId: user.id,
+          paymentMethod,
+          sessionId: latestSession.id,
+          cashAmount: input.cashAmount ?? null,
+          cardAmount: input.cardAmount ?? null,
+        });
+
+        if (error || !data) {
+          const msg = error?.message || 'Impossible de finaliser la commande';
+          Alert.alert('Erreur', msg);
+          return;
+        }
+
+        const modeLine =
+          paymentMethod === 'split'
+            ? `Espèces: ${Number(input.cashAmount ?? 0).toFixed(2)} DH\nCarte: ${Number(input.cardAmount ?? 0).toFixed(
+                2
+              )} DH`
+            : `Mode: ${input.modeLabel}`;
+        Alert.alert('Paiement Reussi', `Montant: ${total.toFixed(2)} DH\n${modeLine}\nCommande #${data.order_number}`, [
+          {
+            text: 'OK',
+            onPress: () => {
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Main', params: { screen: 'Commandes' } }],
+              });
+            },
+          },
+        ]);
+        return;
+      }
+
+      const { data, error } = await apiService.createOrder({
         userId: user.id,
-        paymentMethod,
         sessionId: latestSession.id,
+        items: cart,
+        paymentMethod,
+        tableId: activeTable?.id ?? null,
         cashAmount: input.cashAmount ?? null,
         cardAmount: input.cardAmount ?? null,
       });
-      setLoading(false);
 
       if (error || !data) {
-        const msg = error?.message || 'Impossible de finaliser la commande';
+        const msg = error?.message || 'Impossible de sauvegarder la commande';
         Alert.alert('Erreur', msg);
         return;
       }
 
       const modeLine =
         paymentMethod === 'split'
-          ? `Espèces: ${Number(input.cashAmount ?? 0).toFixed(2)} DH\nCarte: ${Number(input.cardAmount ?? 0).toFixed(
-              2
-            )} DH`
+          ? `Espèces: ${Number(input.cashAmount ?? 0).toFixed(2)} DH\nCarte: ${Number(input.cardAmount ?? 0).toFixed(2)} DH`
           : `Mode: ${input.modeLabel}`;
       Alert.alert('Paiement Reussi', `Montant: ${total.toFixed(2)} DH\n${modeLine}\nCommande #${data.order_number}`, [
         {
           text: 'OK',
           onPress: () => {
+            clearOrder();
             navigation.reset({
               index: 0,
-              routes: [{ name: 'Main', params: { screen: 'Commandes' } }],
+              routes: [{ name: 'Tables' }],
             });
           },
         },
       ]);
-      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      Alert.alert('Erreur', message || 'Impossible de finaliser la commande');
+    } finally {
+      setLoading(false);
     }
-
-    const { data, error } = await apiService.createOrder({
-      userId: user.id,
-      sessionId: latestSession.id,
-      items: cart,
-      paymentMethod,
-      tableId: activeTable?.id ?? null,
-      cashAmount: input.cashAmount ?? null,
-      cardAmount: input.cardAmount ?? null,
-    });
-    setLoading(false);
-
-    if (error || !data) {
-      const msg = error?.message || 'Impossible de sauvegarder la commande';
-      Alert.alert('Erreur', msg);
-      return;
-    }
-
-    const modeLine =
-      paymentMethod === 'split'
-        ? `Espèces: ${Number(input.cashAmount ?? 0).toFixed(2)} DH\nCarte: ${Number(input.cardAmount ?? 0).toFixed(2)} DH`
-        : `Mode: ${input.modeLabel}`;
-    Alert.alert('Paiement Reussi', `Montant: ${total.toFixed(2)} DH\n${modeLine}\nCommande #${data.order_number}`, [
-      {
-        text: 'OK',
-        onPress: () => {
-          clearOrder();
-          navigation.reset({
-            index: 0,
-            routes: [{ name: 'Tables' }],
-          });
-        },
-      },
-    ]);
   };
 
   const handleFinalize = async (modeLabel: 'ESPECES' | 'CB') => {
@@ -263,7 +267,6 @@ export default function PaymentScreen({ navigation, route }: Props) {
       </TouchableOpacity>
 
       {loading && <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 10 }} />}
-      <BottomBar current={orderId ? 'Commandes' : 'Vente'} />
     </View>
   );
 }

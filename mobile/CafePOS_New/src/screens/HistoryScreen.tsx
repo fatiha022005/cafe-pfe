@@ -18,7 +18,6 @@ import { DrawerParamList, OrderItemDetail } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
-import BottomBar from '../components/BottomBar';
 
 type HistoryScreenProps = DrawerScreenProps<DrawerParamList, 'History'>;
 
@@ -33,6 +32,20 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
   const { user } = useGlobal();
   const { theme } = useTheme();
   const styles = getStyles(theme);
+  const formatDateTime = (value?: string | null) =>
+    value ? new Date(value).toLocaleString() : '--';
+  const formatSession = (value?: string | null) => (value ? value.slice(0, 8) : '--');
+  const formatPayment = (order: OrderHistoryItem | null) => {
+    if (!order?.payment_method) return '--';
+    if (order.payment_method === 'cash') return 'Especes';
+    if (order.payment_method === 'card') return 'Carte';
+    if (order.payment_method === 'split') {
+      const cash = Number(order.cash_amount ?? 0).toFixed(2);
+      const card = Number(order.card_amount ?? 0).toFixed(2);
+      return `Split (${cash} DH / ${card} DH)`;
+    }
+    return 'Autre';
+  };
 
   useEffect(() => {
     fetchHistory();
@@ -144,8 +157,6 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
         />
       )}
 
-      <BottomBar current="History" />
-
       <Modal transparent visible={detailsVisible} animationType="fade" onRequestClose={() => setDetailsVisible(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
@@ -155,6 +166,24 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
                 <Text style={styles.modalClose}>FERMER</Text>
               </TouchableOpacity>
             </View>
+            {selectedOrder && (
+              <View style={styles.summaryBlock}>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryText}>
+                    {selectedOrder.table_label ? `Table ${selectedOrder.table_label}` : 'Vente Directe'}
+                  </Text>
+                  <Text style={styles.summaryText}>Total: {selectedOrder.total_amount.toFixed(2)} DH</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryText}>Date: {formatDateTime(selectedOrder.created_at)}</Text>
+                  <Text style={styles.summaryText}>Serveur: {user?.name ?? '--'}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryText}>Paiement: {formatPayment(selectedOrder)}</Text>
+                  <Text style={styles.summaryText}>Session: {formatSession(selectedOrder.session_id)}</Text>
+                </View>
+              </View>
+            )}
 
             {detailsLoading ? (
               <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 12 }} />
@@ -248,6 +277,15 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
     },
     modalTitle: { color: theme.textMain, fontSize: 18, fontWeight: '700' },
     modalClose: { color: theme.accent, fontWeight: '700' },
+    summaryBlock: {
+      marginBottom: 10,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      gap: 6,
+    },
+    summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
+    summaryText: { color: theme.textMain, fontWeight: '600', fontSize: 12 },
     detailRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
