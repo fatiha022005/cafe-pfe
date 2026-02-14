@@ -1,5 +1,6 @@
 ﻿import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, ListRenderItem, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useGlobal } from '../context/GlobalContext';
 import { RootStackParamList, CartItem } from '../types';
@@ -7,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
 import { apiService } from '../services/api';
+import { useScale } from '../hooks/useScale';
 
 type CheckoutScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Ticket'>;
 
@@ -18,7 +20,9 @@ export default function CheckoutScreen({ navigation }: Props) {
   const { cart, removeFromCart, user, activeTable, activeSession, clearOrder } = useGlobal();
   const [loading, setLoading] = useState(false);
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
 
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
@@ -128,9 +132,19 @@ export default function CheckoutScreen({ navigation }: Props) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, paddingHorizontal: 10, paddingTop: 50, paddingBottom: 24 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      paddingHorizontal: s(10),
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     header: {
       padding: 16,
       backgroundColor: theme.surfaceGlass,

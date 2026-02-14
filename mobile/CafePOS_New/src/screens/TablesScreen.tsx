@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ListRenderItem, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { useGlobal } from '../context/GlobalContext';
@@ -8,6 +9,7 @@ import { RootStackParamList, Table } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type TablesScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Tables'>;
 
@@ -22,7 +24,9 @@ export default function TablesScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
 
   useEffect(() => {
     loadTables();
@@ -126,9 +130,19 @@ export default function TablesScreen({ navigation }: Props) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, paddingTop: 50, paddingHorizontal: 10, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      paddingTop: insets.top + s(20),
+      paddingHorizontal: s(10),
+      paddingBottom: insets.bottom,
+    },
     headerBox: {
       backgroundColor: theme.surfaceGlass,
       borderRadius: 14,

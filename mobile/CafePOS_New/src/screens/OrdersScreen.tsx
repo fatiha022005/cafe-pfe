@@ -11,7 +11,7 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DrawerScreenProps } from '@react-navigation/drawer';
 import { useFocusEffect } from '@react-navigation/native';
 import { useGlobal } from '../context/GlobalContext';
@@ -20,6 +20,7 @@ import { DrawerParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type OrdersScreenProps = DrawerScreenProps<DrawerParamList, 'Commandes'>;
 
@@ -47,7 +48,9 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   const [targetItem, setTargetItem] = useState<PendingOrderLineItem | null>(null);
   const { user } = useGlobal();
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
   const itemsTotal = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
   const formatDateTime = (value?: string | null) =>
     value ? new Date(value).toLocaleString() : '--';
@@ -247,7 +250,7 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <View style={styles.container}>
       <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
       <QuickNav current="Commandes" />
 
@@ -430,13 +433,23 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         </View>
       </Modal>
 
-    </SafeAreaView>
+    </View>
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, paddingHorizontal: 10, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      paddingHorizontal: s(10),
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',

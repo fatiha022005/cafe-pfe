@@ -1,5 +1,6 @@
 ﻿import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, TextInput } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useGlobal } from '../context/GlobalContext';
@@ -8,6 +9,7 @@ import { PaymentMethod, RootStackParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type PaymentScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Paiement'>;
 type PaymentScreenRouteProp = RouteProp<RootStackParamList, 'Paiement'>;
@@ -24,7 +26,9 @@ export default function PaymentScreen({ navigation, route }: Props) {
   const [cashInput, setCashInput] = useState('');
   const [cardInput, setCardInput] = useState('');
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
 
   const orderId = route.params?.orderId;
   const total = orderId ? Number(route.params?.total ?? 0) : cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -271,9 +275,19 @@ export default function PaymentScreen({ navigation, route }: Props) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, padding: 16, paddingTop: 50, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      padding: s(16),
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
     icon: { color: theme.textMain, fontSize: 20 },
     split: { color: theme.primary, fontWeight: '700', fontSize: 16, marginTop: 5 },

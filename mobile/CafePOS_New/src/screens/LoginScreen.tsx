@@ -94,7 +94,7 @@ const getStyles = (
       justifyContent: 'center',
       alignItems: 'center',
       padding: s(16),
-      paddingTop: insets.top + s(12),
+      paddingTop: insets.top + s(20),
       paddingBottom: insets.bottom,
     },
     title: { color: theme.textMuted, letterSpacing: 2, marginBottom: s(20), fontSize: s(16) },

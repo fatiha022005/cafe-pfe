@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
 import { DrawerScreenProps } from '@react-navigation/drawer';
 import { StackScreenProps } from '@react-navigation/stack';
@@ -11,6 +12,7 @@ import { DrawerParamList, Product, RootStackParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type GrilleScreenProps = CompositeScreenProps<
   DrawerScreenProps<DrawerParamList, 'Vente'>,
@@ -24,7 +26,9 @@ export default function GrilleScreen({ navigation }: GrilleScreenProps) {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
 
   useEffect(() => {
     loadProducts();
@@ -130,14 +134,23 @@ export default function GrilleScreen({ navigation }: GrilleScreenProps) {
         )}
       </View>
 
-      <OrderSummary items={cart} onRemove={removeFromCart} onValidate={handleValidate} bottomOffset={74} />
+      <OrderSummary items={cart} onRemove={removeFromCart} onValidate={handleValidate} bottomOffset={insets.bottom} />
     </View>
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',

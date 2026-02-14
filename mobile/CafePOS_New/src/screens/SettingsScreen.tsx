@@ -1,5 +1,6 @@
 ﻿import React from 'react';
 import { View, Text, StyleSheet, Switch, TouchableOpacity, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CompositeScreenProps } from '@react-navigation/native';
 import { DrawerScreenProps } from '@react-navigation/drawer';
 import { StackScreenProps } from '@react-navigation/stack';
@@ -10,6 +11,7 @@ import { useTheme } from '../context/ThemeContext';
 import { THEMES } from '../theme/theme';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type SettingsScreenProps = CompositeScreenProps<
   DrawerScreenProps<DrawerParamList, 'Settings'>,
@@ -19,7 +21,9 @@ type SettingsScreenProps = CompositeScreenProps<
 export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   const { setUser, activeSession, setActiveSession, user } = useGlobal();
   const { theme, mode, toggleTheme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
 
   const handleLogout = () => {
     Alert.alert('Deconnexion', 'Etes-vous sur de vouloir quitter ?', [
@@ -96,9 +100,19 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, padding: 16, paddingTop: 50, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      padding: s(16),
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     headerTitle: { color: theme.textMain, fontSize: 22, fontWeight: '700', marginBottom: 16 },
     sectionTitle: {
       color: theme.primary,

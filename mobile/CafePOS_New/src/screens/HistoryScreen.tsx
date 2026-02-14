@@ -10,7 +10,7 @@ import {
   Modal,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DrawerScreenProps } from '@react-navigation/drawer';
 import { useGlobal } from '../context/GlobalContext';
 import { apiService, OrderHistoryItem } from '../services/api';
@@ -18,6 +18,7 @@ import { DrawerParamList, OrderItemDetail } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type HistoryScreenProps = DrawerScreenProps<DrawerParamList, 'History'>;
 
@@ -31,7 +32,9 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const { user } = useGlobal();
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
   const formatDateTime = (value?: string | null) =>
     value ? new Date(value).toLocaleString() : '--';
   const formatSession = (value?: string | null) => (value ? value.slice(0, 8) : '--');
@@ -130,7 +133,7 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <View style={styles.container}>
       <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
       <QuickNav current="History" />
 
@@ -217,13 +220,23 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, paddingHorizontal: 10, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      paddingHorizontal: s(10),
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',

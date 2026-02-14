@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../types';
@@ -8,6 +9,7 @@ import { apiService } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
 import QuickNav from '../components/QuickNav';
+import { useScale } from '../hooks/useScale';
 
 type SessionScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Session'>;
 
@@ -19,6 +21,8 @@ export default function SessionScreen({ navigation }: Props) {
   const { user, activeSession, setActiveSession } = useGlobal();
   const { theme } = useTheme();
   const [loading, setLoading] = useState(false);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
 
   useFocusEffect(
     useCallback(() => {
@@ -66,7 +70,7 @@ export default function SessionScreen({ navigation }: Props) {
     navigation.replace('Login');
   };
 
-  const styles = getStyles(theme);
+  const styles = getStyles(theme, s, insets);
   const hasSession = !!activeSession?.id;
 
   return (
@@ -107,9 +111,19 @@ export default function SessionScreen({ navigation }: Props) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, padding: 16, paddingTop: 50, paddingBottom: 90 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      padding: s(16),
+      paddingTop: insets.top + s(20),
+      paddingBottom: insets.bottom,
+    },
     header: { marginBottom: 16 },
     title: { color: theme.textMain, fontSize: 22, fontWeight: '700' },
     subtitle: { color: theme.textMuted, marginTop: 4 },
