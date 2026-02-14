@@ -37,9 +37,11 @@ DROP FUNCTION IF EXISTS public.create_order_with_items(uuid, uuid, text, jsonb, 
 DROP FUNCTION IF EXISTS public.upsert_pending_order_with_items(uuid, uuid, jsonb);
 DROP FUNCTION IF EXISTS public.upsert_pending_order_with_items(uuid, uuid, jsonb, uuid);
 DROP FUNCTION IF EXISTS public.get_pending_orders(uuid);
+DROP FUNCTION IF EXISTS public.get_pending_order_items(uuid, uuid);
 DROP FUNCTION IF EXISTS public.complete_pending_order(uuid, uuid, text);
 DROP FUNCTION IF EXISTS public.complete_pending_order(uuid, uuid, text, uuid, numeric, numeric);
 DROP FUNCTION IF EXISTS public.cancel_pending_order(uuid, uuid, text, text);
+DROP FUNCTION IF EXISTS public.remove_pending_order_item_damage(uuid, uuid, uuid, text);
 DROP FUNCTION IF EXISTS public.cancel_order_item(uuid, uuid, int, text, text);
 
 -- 1.2 Drop helper + trigger function
@@ -101,6 +103,7 @@ CREATE TABLE public.products (
     stock_quantity INT NOT NULL DEFAULT 0,
     min_stock_alert INT DEFAULT 10,
     description TEXT,
+    image_url TEXT,
     is_available BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
@@ -880,7 +883,170 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_pending_orders(uuid) TO anon, authenticated;
 
--- 8.8 Complete pending order (payment + stock)
+-- 8.8 Pending order items (details)
+CREATE OR REPLACE FUNCTION public.get_pending_order_items(
+    p_order_id uuid,
+    p_user_id uuid
+)
+RETURNS TABLE (
+    id uuid,
+    product_id uuid,
+    product_name text,
+    quantity int,
+    unit_price numeric,
+    subtotal numeric
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order_user uuid;
+    v_order_status text;
+BEGIN
+    IF p_order_id IS NULL THEN
+        RAISE EXCEPTION 'order_required';
+    END IF;
+
+    SELECT o.user_id, o.status
+    INTO v_order_user, v_order_status
+    FROM public.orders o
+    WHERE o.id = p_order_id;
+
+    IF v_order_user IS NULL THEN
+        RAISE EXCEPTION 'order_not_found';
+    END IF;
+
+    IF v_order_status <> 'pending' THEN
+        RAISE EXCEPTION 'order_not_pending';
+    END IF;
+
+    IF NOT public.is_admin() THEN
+        IF p_user_id IS NULL OR p_user_id <> v_order_user THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+        PERFORM 1 FROM public.users u WHERE u.id = p_user_id AND u.is_active = true;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+    END IF;
+
+    RETURN QUERY
+    SELECT oi.id, oi.product_id, p.name, oi.quantity, oi.unit_price, oi.subtotal
+    FROM public.order_items oi
+    JOIN public.products p ON p.id = oi.product_id
+    WHERE oi.order_id = p_order_id
+    ORDER BY oi.created_at ASC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_pending_order_items(uuid, uuid) TO anon, authenticated;
+
+-- 8.9 Remove pending item (damage/loss)
+CREATE OR REPLACE FUNCTION public.remove_pending_order_item_damage(
+    p_order_id uuid,
+    p_item_id uuid,
+    p_user_id uuid,
+    p_reason_note text DEFAULT NULL
+)
+RETURNS TABLE (
+    order_id uuid,
+    order_number int,
+    total_amount numeric,
+    status text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_item record;
+    v_total numeric;
+    v_order_number int;
+    v_status text;
+BEGIN
+    IF p_order_id IS NULL THEN
+        RAISE EXCEPTION 'order_required';
+    END IF;
+    IF p_item_id IS NULL THEN
+        RAISE EXCEPTION 'item_required';
+    END IF;
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+
+    SELECT oi.id,
+           oi.order_id,
+           oi.product_id,
+           oi.quantity,
+           o.user_id AS order_user_id,
+           o.order_number,
+           o.status AS order_status
+    INTO v_item
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    WHERE oi.id = p_item_id
+      AND o.id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'item_not_found';
+    END IF;
+    IF v_item.order_status <> 'pending' THEN
+        RAISE EXCEPTION 'order_not_found_or_not_pending';
+    END IF;
+
+    IF NOT public.is_admin() THEN
+        IF v_item.order_user_id IS NULL OR v_item.order_user_id <> p_user_id THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+        PERFORM 1 FROM public.users u WHERE u.id = p_user_id AND u.is_active = true;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'not_authorized';
+        END IF;
+    END IF;
+
+    DELETE FROM public.order_items WHERE id = p_item_id;
+
+    SELECT COALESCE(SUM(oi.subtotal), 0)
+    INTO v_total
+    FROM public.order_items oi
+    WHERE oi.order_id = p_order_id;
+
+    IF v_total <= 0 THEN
+        UPDATE public.orders o
+        SET status = 'cancelled',
+            total_amount = 0,
+            cancel_reason = 'damage',
+            cancel_note = p_reason_note,
+            cancelled_at = now(),
+            cancelled_by = p_user_id,
+            updated_at = now()
+        WHERE o.id = p_order_id
+        RETURNING o.order_number, o.status INTO v_order_number, v_status;
+    ELSE
+        UPDATE public.orders o
+        SET total_amount = v_total,
+            updated_at = now()
+        WHERE o.id = p_order_id
+        RETURNING o.order_number, o.status INTO v_order_number, v_status;
+    END IF;
+
+    UPDATE public.products p
+    SET stock_quantity = COALESCE(p.stock_quantity, 0) - COALESCE(v_item.quantity, 0)
+    WHERE p.id = v_item.product_id;
+
+    INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
+    VALUES (v_item.product_id, p_user_id, -COALESCE(v_item.quantity, 0), 'damage', p_reason_note);
+
+    RETURN QUERY
+    SELECT p_order_id, v_order_number, v_total, v_status;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.remove_pending_order_item_damage(uuid, uuid, uuid, text) TO anon, authenticated;
+
+-- 8.10 Complete pending order (payment + stock)
 CREATE OR REPLACE FUNCTION public.complete_pending_order(
     p_order_id uuid,
     p_user_id uuid,
@@ -1027,14 +1193,14 @@ BEGIN
         RAISE EXCEPTION 'user_required';
     END IF;
 
-    UPDATE public.orders
+    UPDATE public.orders o
     SET status = 'cancelled',
         cancel_reason = p_reason,
         cancel_note = p_note,
         cancelled_at = now(),
         cancelled_by = p_user_id,
         updated_at = now()
-    WHERE id = p_order_id AND status = 'pending'
+    WHERE o.id = p_order_id AND o.status = 'pending'
     RETURNING * INTO v_order;
 
     IF NOT FOUND THEN

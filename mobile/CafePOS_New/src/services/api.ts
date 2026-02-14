@@ -1,6 +1,7 @@
-﻿import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { CartItem, Product, Table, User, ServerSession, PendingOrder, PaymentMethod, OrderItemDetail } from '../types';
 import { PRODUITS } from '../data/produits';
+import { buildProductImage } from '../utils/productImage';
 
 export interface OrderHistoryItem {
   id: string;
@@ -170,7 +171,7 @@ export const apiService = {
 
     const { data, error } = await supabase
       .from('products')
-      .select('id, name, category, price, is_available')
+      .select('id, name, category, price, is_available, image_url')
       .eq('is_available', true)
       .order('name', { ascending: true });
 
@@ -184,6 +185,7 @@ export const apiService = {
         name: item.name,
         category: item.category,
         price: Number(item.price ?? 0),
+        image: item.image_url || buildProductImage(item.name, item.category),
       })) ?? [];
 
     return { data: products, error: null };
@@ -742,3 +744,4 @@ export const apiService = {
     return { data, error: null };
   },
 };
+

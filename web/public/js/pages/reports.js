@@ -52,7 +52,7 @@ window.renderReports = async function() {
         <div class="report-split">
             <div class="chart-container-pro">
                 <h3 class="font-bold text-white mb-4" style="font-size: 1rem;">Performance Équipe</h3>
-                <div class="table-scroll">
+                <div class="table-scroll" style="max-height: 260px; overflow-y: auto;">
                     <table class="table-modern">
                         <thead>
                             <tr>
@@ -74,18 +74,19 @@ window.renderReports = async function() {
                     <h3 class="font-bold text-white" style="font-size: 1rem;">Dégâts & Pertes</h3>
                     <span class="text-muted" id="loss-total">--</span>
                 </div>
-                <div class="table-scroll">
+                <div class="table-scroll" style="max-height: 260px; overflow-y: auto;">
                     <table class="table-modern">
                         <thead>
                             <tr>
                                 <th>Date</th>
                                 <th>Produit</th>
-                                <th class="text-center">Type</th>
+                                <th>Employé</th>
+                                <th class="text-center">Cause</th>
                                 <th class="text-center">Qté</th>
                             </tr>
                         </thead>
                         <tbody id="loss-list">
-                            <tr><td colspan="4" class="loading-text">Chargement...</td></tr>
+                            <tr><td colspan="5" class="loading-text">Chargement...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -177,7 +178,7 @@ async function loadReportsData() {
         renderReportChart(sortedProducts);
 
         const { data: orders, error: ordersError } = await sb.from('orders')
-            .select('total_amount, status, users(first_name, last_name)')
+            .select('total_amount, status, users!orders_user_id_fkey(first_name, last_name)')
             .gte('created_at', start)
             .lte('created_at', end)
             .eq('status', 'completed');
@@ -207,7 +208,7 @@ async function loadReportsData() {
         document.getElementById('emp-perf-list').innerHTML = perfRows || '<tr><td colspan="4" class="text-center text-muted">Aucune donnée.</td></tr>';
 
         const { data: losses, error: lossError } = await sb.from('stock_logs')
-            .select('change_amount, reason, created_at, products(name)')
+            .select('change_amount, reason, created_at, notes, products(name), users(first_name, last_name)')
             .in('reason', ['damage', 'waste'])
             .gte('created_at', start)
             .lte('created_at', end)
@@ -219,16 +220,33 @@ async function loadReportsData() {
         const totalLoss = (losses || []).reduce((sum, l) => sum + Math.abs(toNumber(l.change_amount)), 0);
         document.getElementById('loss-total').textContent = `Total: ${totalLoss}`;
 
-        const lossRows = (losses || []).map(l => `
+        const toCauseLabel = (entry) => {
+            const raw = (entry?.notes || '').toString().trim().toLowerCase();
+            if (raw) {
+                if (raw.includes('renvers')) return 'Renversé';
+                if (raw.includes('casse')) return 'Cassé';
+                if (raw.includes('changement')) return 'Changement';
+                return escapeHtml(entry.notes);
+            }
+            if (entry?.reason === 'damage') return 'Dégât';
+            if (entry?.reason === 'waste') return 'Perte';
+            return '—';
+        };
+
+        const lossRows = (losses || []).map(l => {
+            const empName = l.users ? `${l.users.first_name || ''} ${l.users.last_name || ''}`.trim() : '';
+            return `
             <tr>
                 <td class="text-muted">${formatDate(l.created_at)}</td>
                 <td>${escapeHtml(l.products?.name || 'Produit')}</td>
-                <td class="text-center">${l.reason === 'damage' ? 'Dégât' : 'Perte'}</td>
+                <td>${escapeHtml(empName || '—')}</td>
+                <td class="text-center">${toCauseLabel(l)}</td>
                 <td class="text-center font-bold">${Math.abs(toNumber(l.change_amount))}</td>
             </tr>
-        `).join('');
+        `;
+        }).join('');
 
-        document.getElementById('loss-list').innerHTML = lossRows || '<tr><td colspan="4" class="text-center text-muted">Aucune donnée.</td></tr>';
+        document.getElementById('loss-list').innerHTML = lossRows || '<tr><td colspan="5" class="text-center text-muted">Aucune donnée.</td></tr>';
 
     } catch (e) {
         console.error('Erreur Reports:', e);
@@ -277,7 +295,11 @@ function renderReportChart(dataArray) {
             scales: {
                 x: {
                     grid: { color: 'rgba(15, 23, 42, 0.08)' },
-                    ticks: { color: '#475569' }
+                    ticks: {
+                        color: '#475569',
+                        stepSize: 5,
+                        precision: 0
+                    }
                 },
                 y: {
                     grid: { display: false },

@@ -2,6 +2,7 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
+import { useScale } from '../hooks/useScale';
 
 type NavKey = 'Tables' | 'Vente' | 'Commandes' | 'History' | 'Settings' | 'Session';
 
@@ -12,7 +13,8 @@ interface QuickNavProps {
 export default function QuickNav({ current }: QuickNavProps) {
   const navigation = useNavigation<any>();
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const styles = getStyles(theme, s);
 
   const goDrawer = (screen: 'Vente' | 'Commandes' | 'History' | 'Settings') => {
     const drawer = navigation.getParent?.('MainDrawer');
@@ -50,26 +52,26 @@ export default function QuickNav({ current }: QuickNavProps) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (theme: ReturnType<typeof useTheme>['theme'], s: (value: number) => number) =>
   StyleSheet.create({
     container: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 8,
-      marginBottom: 12,
+      gap: s(8),
+      marginBottom: s(12),
     },
     pill: {
       backgroundColor: theme.surfaceCardStrong,
       borderWidth: 1,
       borderColor: theme.border,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
+      paddingVertical: s(8),
+      paddingHorizontal: s(12),
       borderRadius: 999,
     },
     pillActive: {
       backgroundColor: theme.accentSoft,
       borderColor: theme.accent,
     },
-    pillText: { color: theme.textMain, fontWeight: '600', fontSize: 12 },
+    pillText: { color: theme.textMain, fontWeight: '600', fontSize: s(12) },
     pillTextActive: { color: theme.textMain },
   });

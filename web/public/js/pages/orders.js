@@ -62,7 +62,7 @@ async function ensureOrderUserId() {
 
 async function loadOrders(status = 'all') {
     let query = sb.from('orders')
-        .select('*, users(first_name, last_name), tables(label)')
+        .select('*, users!orders_user_id_fkey(first_name, last_name), tables(label)')
         .order('created_at', { ascending: false })
         .limit(50);
 

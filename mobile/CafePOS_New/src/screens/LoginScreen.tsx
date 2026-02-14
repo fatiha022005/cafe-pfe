@@ -1,5 +1,6 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useGlobal } from '../context/GlobalContext';
 import BoutonClavier from '../components/BoutonClavier';
@@ -7,6 +8,7 @@ import { apiService } from '../services/api';
 import { RootStackParamList } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import TopBar from '../components/TopBar';
+import { useScale } from '../hooks/useScale';
 
 type LoginScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Login'>;
 
@@ -19,7 +21,9 @@ export default function LoginScreen({ navigation }: Props) {
   const [loading, setLoading] = useState<boolean>(false);
   const { setUser, setActiveSession } = useGlobal();
   const { theme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const insets = useSafeAreaInsets();
+  const styles = getStyles(theme, s, insets);
 
   const handlePress = (val: string) => {
     if (pin.length < 4) setPin(prev => prev + val);
@@ -78,22 +82,35 @@ export default function LoginScreen({ navigation }: Props) {
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (
+  theme: ReturnType<typeof useTheme>['theme'],
+  s: (value: number) => number,
+  insets: { top: number; bottom: number }
+) =>
   StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.bgBody, justifyContent: 'center', alignItems: 'center', padding: 16 },
-    title: { color: theme.textMuted, letterSpacing: 2, marginBottom: 20, fontSize: 16 },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bgBody,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: s(16),
+      paddingTop: insets.top + s(12),
+      paddingBottom: insets.bottom,
+    },
+    title: { color: theme.textMuted, letterSpacing: 2, marginBottom: s(20), fontSize: s(16) },
     display: {
       backgroundColor: theme.surfaceCardStrong,
       width: '80%',
-      padding: 25,
-      borderRadius: 12,
-      marginBottom: 30,
+      padding: s(25),
+      borderRadius: s(12),
+      marginBottom: s(30),
       alignItems: 'center',
-      minHeight: 90,
+      minHeight: s(90),
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: theme.border,
     },
-    displayText: { color: theme.textMain, fontSize: 32, letterSpacing: 8 },
+    displayText: { color: theme.textMain, fontSize: s(32), letterSpacing: 8 },
     grid: { width: '90%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', maxWidth: 400 },
   });
+

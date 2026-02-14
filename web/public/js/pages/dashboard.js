@@ -272,6 +272,10 @@ function renderMainChart(orders, range) {
             scales: {
                 y: {
                     beginAtZero: true,
+                    ticks: {
+                        stepSize: 5,
+                        precision: 0
+                    },
                     grid: { color: 'rgba(15, 23, 42, 0.08)' },
                     border: { display: false }
                 },

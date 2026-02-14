@@ -77,15 +77,31 @@ async function loadSessions() {
     if (status === 'open') query = query.is('end_time', null);
     if (status === 'closed') query = query.not('end_time', 'is', null);
 
-    if (startInput) {
-        const startDate = new Date(startInput);
-        startDate.setHours(0, 0, 0, 0);
-        query = query.gte('start_time', startDate.toISOString());
-    }
-    if (endInput) {
-        const endDate = new Date(endInput);
-        endDate.setHours(23, 59, 59, 999);
-        query = query.lte('start_time', endDate.toISOString());
+    const startDate = startInput ? new Date(startInput) : null;
+    const endDate = endInput ? new Date(endInput) : null;
+    if (startDate) startDate.setHours(0, 0, 0, 0);
+    if (endDate) endDate.setHours(23, 59, 59, 999);
+    const startIso = startDate ? startDate.toISOString() : '';
+    const endIso = endDate ? endDate.toISOString() : '';
+
+    if (status === 'open') {
+        // Always show open sessions, even if the date range excludes their start date.
+    } else if (status === 'all') {
+        if (startIso || endIso) {
+            const clauses = [];
+            if (startIso && endIso) {
+                clauses.push(`and(start_time.gte.${startIso},start_time.lte.${endIso})`);
+            } else if (startIso) {
+                clauses.push(`start_time.gte.${startIso}`);
+            } else if (endIso) {
+                clauses.push(`start_time.lte.${endIso}`);
+            }
+            clauses.push('end_time.is.null');
+            query = query.or(clauses.join(','));
+        }
+    } else {
+        if (startIso) query = query.gte('start_time', startIso);
+        if (endIso) query = query.lte('start_time', endIso);
     }
 
     const { data, error } = await query;
@@ -130,7 +146,7 @@ async function showSessionDetails(sessionId) {
     if (!session) return;
 
     const { data: orders, error } = await sb.from('orders')
-        .select('id, order_number, total_amount, created_at, status, tables(label), users(first_name, last_name)')
+        .select('id, order_number, total_amount, created_at, status, tables(label), users!orders_user_id_fkey(first_name, last_name)')
         .eq('session_id', sessionId)
         .eq('status', 'completed')
         .order('created_at', { ascending: false });

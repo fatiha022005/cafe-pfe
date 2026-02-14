@@ -15,6 +15,49 @@ const ICON_DELETE = `
   <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
 </svg>`;
 
+const productImageColor = (category) => {
+    const map = {
+        'Café': '#c85c2a',
+        'Boissons': '#2563eb',
+        'Boissons Chaudes': '#c85c2a',
+        'Boissons Froides': '#2563eb',
+        'Snack': '#16a34a',
+        'Nourriture': '#16a34a',
+        'Viennoiseries': '#b45309',
+        'Petit Dejeuner': '#9333ea',
+        'Plats': '#dc2626'
+    };
+    return map[category] || '#6b7280';
+};
+
+const buildProductImage = (name, category) => {
+    const safeName = (name || 'Produit').trim() || 'Produit';
+    const parts = safeName.split(/\s+/).filter(Boolean);
+    const initials = parts.length === 0
+        ? 'PR'
+        : parts.length === 1
+            ? parts[0].slice(0, 2).toUpperCase()
+            : (parts[0][0] + parts[1][0]).toUpperCase();
+    const bg = productImageColor(category);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" rx="24" fill="${bg}"/><text x="100" y="115" font-family="Sora, Arial" font-size="72" font-weight="700" text-anchor="middle" fill="#fffaf4">${initials}</text></svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+const sanitizeFileName = (name) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+async function uploadProductImage(productId, file) {
+    const ext = (file.name && file.name.includes('.')) ? file.name.split('.').pop() : 'jpg';
+    const safeExt = String(ext || 'jpg').toLowerCase();
+    const filePath = `products/${productId}.${safeExt}`;
+    const { error: uploadError } = await sb.storage
+        .from('product-images')
+        .upload(filePath, file, { upsert: true, cacheControl: '3600', contentType: file.type || 'image/jpeg' });
+
+    if (uploadError) throw uploadError;
+    const { data } = sb.storage.from('product-images').getPublicUrl(filePath);
+    return data.publicUrl;
+}
+
 window.renderProducts = async function() {
     const container = document.getElementById('main-view');
     container.innerHTML = `
@@ -92,11 +135,22 @@ function getModalTemplate() {
                             <option value="false">Indisponible</option>
                         </select>
                     </div>
-                    <div class="field full">
-                        <label>Description</label>
-                        <input type="text" name="description" class="input-std" placeholder="Optionnel">
+                <div class="field full">
+                    <label>Description</label>
+                    <input type="text" name="description" class="input-std" placeholder="Optionnel">
+                </div>
+                <div class="field full">
+                    <label>Image (fichier)</label>
+                    <input type="file" name="image_file" accept="image/*" class="input-std">
+                    <div id="image-preview" style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+                        <span class="text-muted">Aucune image</span>
                     </div>
                 </div>
+                <div class="field full">
+                    <label>Image (URL)</label>
+                    <input type="text" name="image_url" class="input-std" placeholder="Optionnel (auto-généré si vide)">
+                </div>
+            </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-secondary close-modal">Annuler</button>
                     <button type="submit" class="btn-primary">Enregistrer</button>
@@ -116,6 +170,24 @@ async function fetchProducts(query = '') {
         document.getElementById('p-list').innerHTML = '<tr><td colspan="5" class="text-center text-muted">Erreur de chargement.</td></tr>';
         return;
     }
+    if (data && data.length) {
+        const updates = data
+            .filter(p => !p.image_url)
+            .map(p => ({
+                id: p.id,
+                image_url: buildProductImage(p.name, p.category)
+            }));
+
+        if (updates.length) {
+            await Promise.all(updates.map(u => sb.from('products').update({ image_url: u.image_url }).eq('id', u.id)));
+            data.forEach(p => {
+                if (!p.image_url) {
+                    p.image_url = updates.find(u => u.id === p.id)?.image_url || p.image_url;
+                }
+            });
+        }
+    }
+
     productCache = new Map((data || []).map(p => [p.id, p]));
     renderList(data || []);
 }
@@ -148,13 +220,52 @@ function renderList(products) {
 function bindProductEvents() {
     const modal = document.getElementById('product-modal');
     const form = document.getElementById('p-form');
+    const imagePreview = document.getElementById('image-preview');
+    const imageFileInput = form.querySelector('[name="image_file"]');
+    const imageUrlInput = form.querySelector('[name="image_url"]');
 
     const toggleModal = (show) => modal.classList.toggle('hidden', !show);
+
+    const setImagePreview = (url) => {
+        if (!imagePreview) return;
+        if (!url) {
+            imagePreview.innerHTML = '<span class="text-muted">Aucune image</span>';
+            return;
+        }
+        imagePreview.innerHTML = `
+            <img src="${url}" alt="Aperçu" style="width:72px;height:72px;border-radius:12px;object-fit:cover;border:1px solid rgba(15,23,42,0.12);" />
+            <span class="text-muted" style="font-size:0.85rem;">Aperçu</span>
+        `;
+    };
+
+    if (imageFileInput) {
+        imageFileInput.addEventListener('change', () => {
+            const file = imageFileInput.files?.[0];
+            if (file) {
+                setImagePreview(URL.createObjectURL(file));
+            } else if (imageUrlInput?.value) {
+                setImagePreview(imageUrlInput.value.trim());
+            } else {
+                setImagePreview('');
+            }
+        });
+    }
+
+    if (imageUrlInput) {
+        imageUrlInput.addEventListener('input', () => {
+            if (!imageFileInput?.files?.length) {
+                setImagePreview(imageUrlInput.value.trim());
+            }
+        });
+    }
     
     document.getElementById('btn-add').onclick = () => {
         form.reset();
         document.querySelector('[name="id"]').value = '';
         document.getElementById('m-title').textContent = 'Nouveau Produit';
+        if (imageFileInput) imageFileInput.value = '';
+        if (imageUrlInput) imageUrlInput.value = '';
+        setImagePreview('');
         toggleModal(true);
     };
 
@@ -174,6 +285,9 @@ function bindProductEvents() {
                 if (input) input.value = data[k];
             });
             document.getElementById('m-title').textContent = 'Modifier';
+            if (imageFileInput) imageFileInput.value = '';
+            if (imageUrlInput) imageUrlInput.value = data.image_url || '';
+            setImagePreview(data.image_url || buildProductImage(data.name, data.category));
             toggleModal(true);
         }
         
@@ -190,25 +304,49 @@ function bindProductEvents() {
         const data = Object.fromEntries(new FormData(e.target));
         const id = data.id;
         delete data.id;
+        const imageFile = imageFileInput?.files?.[0] || null;
+        delete data.image_file;
         if (data.name) data.name = data.name.trim();
         if (data.category) data.category = data.category.trim();
         if (data.description) data.description = data.description.trim();
+        if (data.image_url) data.image_url = data.image_url.trim();
         data.price = toNumber(data.price);
         data.cost = toNumber(data.cost);
         data.stock_quantity = parseInt(data.stock_quantity, 10) || 0;
         data.min_stock_alert = parseInt(data.min_stock_alert, 10) || 10;
         data.is_available = data.is_available === 'true';
         if (!data.description) data.description = null;
+        const imageUrlText = data.image_url || '';
+        delete data.image_url;
 
-        const { error } = id 
-            ? await sb.from('products').update(data).eq('id', id)
-            : await sb.from('products').insert(data);
+        try {
+            let productId = id;
+            let imageUrl = imageUrlText;
 
-        if (!error) {
+            if (id) {
+                const { error: updateError } = await sb.from('products').update(data).eq('id', id);
+                if (updateError) throw updateError;
+            } else {
+                const { data: inserted, error: insertError } = await sb.from('products').insert(data).select('id').single();
+                if (insertError) throw insertError;
+                productId = inserted.id;
+            }
+
+            if (imageFile && productId) {
+                imageUrl = await uploadProductImage(productId, imageFile);
+            }
+            if (!imageUrl) {
+                imageUrl = buildProductImage(data.name, data.category);
+            }
+            if (productId) {
+                const { error: imgError } = await sb.from('products').update({ image_url: imageUrl }).eq('id', productId);
+                if (imgError) throw imgError;
+            }
+
             toggleModal(false);
             fetchProducts();
-        } else {
-            alert('Erreur: ' + error.message);
+        } catch (err) {
+            alert('Erreur: ' + (err?.message || err));
         }
     };
 }

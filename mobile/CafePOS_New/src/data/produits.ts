@@ -1,4 +1,5 @@
 import { Product } from '../types';
+import { buildProductImage } from '../utils/productImage';
 
 export const CATEGORIES = ['Boissons Chaudes', 'Boissons Froides', 'Petit Dejeuner', 'Viennoiseries', 'Plats'];
 
@@ -8,20 +9,20 @@ export const PRODUITS: Product[] = [
     name: 'Cafe Expresso',
     price: 15,
     category: 'Boissons Chaudes',
-    image: 'https://via.placeholder.com/150',
+    image: buildProductImage('Cafe Expresso', 'Boissons Chaudes'),
   },
   {
     id: '2',
     name: 'Jus Orange',
     price: 25,
     category: 'Boissons Froides',
-    image: 'https://via.placeholder.com/150',
+    image: buildProductImage('Jus Orange', 'Boissons Froides'),
   },
   {
     id: '3',
     name: 'Croissant',
     price: 12,
     category: 'Viennoiseries',
-    image: 'https://via.placeholder.com/150',
+    image: buildProductImage('Croissant', 'Viennoiseries'),
   },
 ];

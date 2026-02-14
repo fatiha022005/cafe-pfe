@@ -2,6 +2,8 @@
 import { View, Text, StyleSheet, TouchableOpacity, Image, ImageSourcePropType } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { THEMES } from '../theme/theme';
+import { useScale } from '../hooks/useScale';
+import CafeLogo from './CafeLogo';
 
 interface TopBarProps {
   title?: string;
@@ -14,17 +16,18 @@ export default function TopBar({
   title = 'CafePOS',
   subtitle,
   showThemeToggle = true,
-  logoSource = require('../../assets/icon.png'),
+  logoSource,
 }: TopBarProps) {
   const { theme, mode, toggleTheme } = useTheme();
-  const styles = getStyles(theme);
+  const { s } = useScale();
+  const styles = getStyles(theme, s);
   const themeLabel = mode === THEMES.DARK ? 'Latte' : 'Noir Cafe';
 
   return (
     <View style={styles.container}>
       <View style={styles.brand}>
         <View style={styles.logoBox}>
-          <Image source={logoSource} style={styles.logo} resizeMode="contain" />
+          {logoSource ? <Image source={logoSource} style={styles.logo} resizeMode="contain" /> : <CafeLogo size={s(30)} />}
         </View>
         <View>
           <Text style={styles.title}>{title}</Text>
@@ -41,25 +44,25 @@ export default function TopBar({
   );
 }
 
-const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+const getStyles = (theme: ReturnType<typeof useTheme>['theme'], s: (value: number) => number) =>
   StyleSheet.create({
     container: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingHorizontal: s(16),
+      paddingVertical: s(12),
       backgroundColor: theme.surfaceGlass,
-      borderRadius: 16,
+      borderRadius: s(16),
       borderWidth: 1,
       borderColor: theme.border,
-      marginBottom: 12,
+      marginBottom: s(12),
     },
-    brand: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    brand: { flexDirection: 'row', alignItems: 'center', gap: s(12) },
     logoBox: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
+      width: s(44),
+      height: s(44),
+      borderRadius: s(14),
       backgroundColor: theme.bgSurface2,
       borderWidth: 1,
       borderColor: theme.border,
@@ -67,16 +70,16 @@ const getStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
       justifyContent: 'center',
       overflow: 'hidden',
     },
-    logo: { width: 30, height: 30 },
-    title: { color: theme.textMain, fontSize: 18, fontWeight: '700' },
-    subtitle: { color: theme.primary, fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+    logo: { width: s(30), height: s(30) },
+    title: { color: theme.textMain, fontSize: s(18), fontWeight: '700' },
+    subtitle: { color: theme.primary, fontSize: s(12), fontWeight: '700', letterSpacing: 1 },
     themeBtn: {
       backgroundColor: theme.surfaceCardStrong,
       borderWidth: 1,
       borderColor: theme.border,
       borderRadius: 999,
-      paddingVertical: 8,
-      paddingHorizontal: 14,
+      paddingVertical: s(8),
+      paddingHorizontal: s(14),
     },
-    themeText: { color: theme.textMain, fontWeight: '700' },
+    themeText: { color: theme.textMain, fontWeight: '700', fontSize: s(12) },
   });
