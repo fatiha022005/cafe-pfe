@@ -134,7 +134,7 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <TopBar title="CafePOS" />
       <QuickNav current="History" />
 
       <View style={styles.header}>
@@ -198,9 +198,11 @@ export default function HistoryScreen({ navigation }: HistoryScreenProps) {
                 renderItem={({ item }) => (
                   <View style={styles.detailRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.detailName}>{item.product_name || 'Produit'}</Text>
+                      <Text style={styles.detailName}>
+                        {item.quantity} {item.product_name || 'Produit'}
+                      </Text>
                       <Text style={styles.detailSub}>
-                        Qté: {item.quantity} | ANNULE: {item.cancelled_quantity} | Restant: {item.net_quantity}
+                        Annulé: {item.cancelled_quantity} | Restant: {item.net_quantity}
                       </Text>
                     </View>
                     <View style={styles.detailActions}>

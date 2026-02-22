@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,8 @@ import { useScale } from '../hooks/useScale';
 
 type OrdersScreenProps = DrawerScreenProps<DrawerParamList, 'Commandes'>;
 
-type CancelReason = 'damage' | 'loss' | null;
+type CancelReason = 'cancel' | 'damage' | 'loss' | null;
+type ItemCancelReason = 'damage' | 'loss' | null;
 
 export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   const [orders, setOrders] = useState<PendingOrderItem[]>([]);
@@ -45,7 +46,11 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
   const [damageNote, setDamageNote] = useState('');
   const [damageSubmitting, setDamageSubmitting] = useState(false);
   const [damageError, setDamageError] = useState<string | null>(null);
+  const [itemCancelReason, setItemCancelReason] = useState<ItemCancelReason>(null);
   const [targetItem, setTargetItem] = useState<PendingOrderLineItem | null>(null);
+  const [returnToItemsAfterDamage, setReturnToItemsAfterDamage] = useState(false);
+  const [itemCancelQty, setItemCancelQty] = useState('1');
+  const notifiedRef = useRef(new Set<string>());
   const { user } = useGlobal();
   const { theme } = useTheme();
   const { s } = useScale();
@@ -66,10 +71,69 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     }, [user?.id])
   );
 
-  const fetchOrders = async (opts?: { refresh?: boolean }) => {
+  useEffect(() => {
+    if (!user?.id) return;
+    const timer = setInterval(() => fetchOrders({ silent: true }), 10000);
+    return () => clearInterval(timer);
+  }, [user?.id]);
+
+  const clampQty = (value: number, max: number) => Math.max(1, Math.min(value, max));
+  const parseQty = (value: string, max: number) => {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isNaN(parsed)) return 1;
+    return clampQty(parsed, max);
+  };
+  const updateItemCancelQty = (value: number) => {
+    if (!targetItem) return;
+    const max = targetItem.quantity || 1;
+    const next = clampQty(value, max);
+    setItemCancelQty(String(next));
+  };
+  const normalizeItemCancelQty = () => {
+    if (!targetItem) return;
+    const max = targetItem.quantity || 1;
+    const next = parseQty(itemCancelQty, max);
+    setItemCancelQty(String(next));
+  };
+
+  const kitchenReasonLabel = (reason?: string | null) => {
+    if (!reason) return '';
+    const map: Record<string, string> = {
+      rupture: 'Rupture de stock',
+      panne: 'Panne matériel',
+      autre: 'Autre',
+    };
+    return map[reason] || reason;
+  };
+
+  const notifyKitchenUpdates = (data: PendingOrderItem[]) => {
+    data.forEach((order) => {
+      if (order.kitchen_status !== 'ready' && order.kitchen_status !== 'rejected') return;
+      const key = `${order.id}:${order.kitchen_status}:${order.kitchen_note || ''}`;
+      if (notifiedRef.current.has(key)) return;
+
+      if (order.kitchen_status === 'ready') {
+        Alert.alert(
+          'Commande prête',
+          `Commande #${order.order_number} ${order.table_label ? `(Table ${order.table_label})` : ''} est prête.`
+        );
+      } else {
+        const reason = kitchenReasonLabel(order.kitchen_reason);
+        const note = order.kitchen_note ? `\nNote: ${order.kitchen_note}` : '';
+        Alert.alert(
+          'Commande refusée',
+          `Commande #${order.order_number} ${reason ? `• ${reason}` : ''}${note}`
+        );
+      }
+
+      notifiedRef.current.add(key);
+    });
+  };
+
+  const fetchOrders = async (opts?: { refresh?: boolean; silent?: boolean }) => {
     if (opts?.refresh) {
       setRefreshing(true);
-    } else {
+    } else if (!opts?.silent) {
       setLoading(true);
     }
     setError(null);
@@ -77,6 +141,7 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     try {
       const { data, error } = await apiService.getPendingOrders(user?.id);
       if (!error && data) {
+        notifyKitchenUpdates(data);
         setOrders(data);
       } else {
         console.error('Pending orders fetch error', error);
@@ -90,7 +155,7 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     } finally {
       if (opts?.refresh) {
         setRefreshing(false);
-      } else {
+      } else if (!opts?.silent) {
         setLoading(false);
       }
     }
@@ -98,7 +163,8 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
 
   const openCancelModal = (order: PendingOrderItem) => {
     setTargetOrder(order);
-    setCancelReason(null);
+    const ready = order.kitchen_status === 'ready';
+    setCancelReason(ready ? null : 'cancel');
     setCancelNote('');
     setModalVisible(true);
   };
@@ -146,9 +212,18 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     try {
       const { data, error } = await apiService.getPendingOrderItems(orderId, user.id);
       if (error) {
+        const message = String(error.message || '');
+        if (message.includes('order_not_pending')) {
+          // The order was finalized on another device; refresh and exit cleanly.
+          setOrderItems([]);
+          setItemsModalVisible(false);
+          await fetchOrders({ refresh: true });
+          Alert.alert('Info', 'Cette commande est deja cloturee.');
+          return;
+        }
         console.error('Pending order items fetch error', error);
         setOrderItems([]);
-        setItemsError(error.message || "Impossible de charger les articles.");
+        setItemsError(message || "Impossible de charger les articles.");
       } else {
         setOrderItems(data ?? []);
       }
@@ -172,45 +247,76 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
 
   const openDamageModal = (item: PendingOrderLineItem) => {
     setTargetItem(item);
+    setItemCancelReason(null);
     setDamageNote('');
     setDamageError(null);
+    setItemCancelQty('1');
+    setReturnToItemsAfterDamage(itemsModalVisible);
+    if (itemsModalVisible) {
+      setItemsModalVisible(false);
+    }
     setDamageModalVisible(true);
+  };
+
+  const closeDamageModal = (opts?: { reopenItems?: boolean }) => {
+    setDamageModalVisible(false);
+    setItemCancelReason(null);
+    if (opts?.reopenItems && itemsOrder) {
+      setItemsModalVisible(true);
+    }
+    setReturnToItemsAfterDamage(false);
   };
 
   const handleRemoveDamage = async () => {
     if (!itemsOrder || !targetItem || !user?.id) {
-      setDamageModalVisible(false);
+      closeDamageModal({ reopenItems: returnToItemsAfterDamage });
       return;
     }
+    const ready = itemsOrder.kitchen_status === 'ready';
+    const maxQty = targetItem.quantity || 1;
+    const qty = Number.parseInt(itemCancelQty, 10);
+    if (!qty || qty < 1 || qty > maxQty) {
+      const message = 'Quantite invalide.';
+      setDamageError(message);
+      Alert.alert('Erreur', message);
+      return;
+    }
+    if (ready && !itemCancelReason) {
+      Alert.alert('Erreur', 'Merci de choisir Degat ou Perte.');
+      return;
+    }
+    const reason = ready ? itemCancelReason : 'cancel';
     const note = damageNote.trim();
-    if (!note) {
-      Alert.alert('Erreur', 'Merci d\'indiquer la raison du degat.');
-      return;
-    }
 
     setDamageSubmitting(true);
     setDamageError(null);
     try {
-      const { data, error } = await apiService.removePendingOrderItemDamage({
+      const { data, error } = await apiService.cancelPendingOrderItem({
         orderId: itemsOrder.id,
         itemId: targetItem.id,
         userId: user.id,
-        reasonNote: note,
+        reason,
+        note: note || null,
+        cancelQty: qty,
       });
 
       if (error) {
         setDamageError(error.message);
-        Alert.alert('Erreur', error.message || 'Impossible de supprimer l\'article.');
+        Alert.alert('Erreur', error.message || "Impossible de supprimer l'article.");
         return;
       }
 
-      setDamageModalVisible(false);
       await fetchOrderItems(itemsOrder.id);
       await fetchOrders({ refresh: true });
 
-      if (data?.status === 'cancelled') {
+      const orderCancelled = data?.status === 'cancelled';
+      if (orderCancelled) {
         setItemsModalVisible(false);
+      } else if (returnToItemsAfterDamage && itemsOrder) {
+        setItemsModalVisible(true);
       }
+      setReturnToItemsAfterDamage(false);
+      setDamageModalVisible(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setDamageError(message || 'Erreur lors du degat.');
@@ -218,6 +324,11 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
     } finally {
       setDamageSubmitting(false);
     }
+  };
+
+  const handleItemCancelPress = (item: PendingOrderLineItem) => {
+    if (!itemsOrder || !user?.id) return;
+    openDamageModal(item);
   };
 
   const renderItem: ListRenderItem<PendingOrderItem> = ({ item }) => (
@@ -231,6 +342,12 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
           {' - '}
           {new Date(item.created_at).toLocaleDateString()}
         </Text>
+        {item.kitchen_status === 'ready' && <Text style={[styles.kitchenTag, styles.kitchenReady]}>PRETE</Text>}
+        {item.kitchen_status === 'rejected' && (
+          <Text style={[styles.kitchenTag, styles.kitchenRejected]}>
+            REFUSEE {item.kitchen_reason ? `• ${kitchenReasonLabel(item.kitchen_reason)}` : ''}
+          </Text>
+        )}
       </View>
       <View style={styles.cardRight}>
         <Text style={styles.totalText}>{item.total_amount.toFixed(2)} DH</Text>
@@ -251,7 +368,7 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <TopBar title="CafePOS" />
       <QuickNav current="Commandes" />
 
       <View style={styles.header}>
@@ -283,24 +400,52 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Annuler la commande</Text>
-            <Text style={styles.modalSub}>Choisir une raison</Text>
+            <Text style={styles.modalSub}>
+              {targetOrder?.kitchen_status === 'ready'
+                ? 'Commande prête: choisir Dégât ou Perte'
+                : 'Commande pas encore prête: annulation simple'}
+            </Text>
+            <View style={styles.adjustRow}>
+              <TouchableOpacity
+                style={styles.adjustBtn}
+                onPress={() => {
+                  if (targetOrder) {
+                    setModalVisible(false);
+                    openItemsModal(targetOrder);
+                  }
+                }}
+              >
+                <Text style={styles.adjustBtnText}>Ajuster quantites</Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.reasonRow}>
-              <TouchableOpacity
-                style={[styles.reasonBtn, cancelReason === 'damage' && styles.reasonBtnActive]}
-                onPress={() => setCancelReason('damage')}
-              >
-                <Text style={styles.reasonText}>Degat (casse/renverse)</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.reasonBtn, cancelReason === 'loss' && styles.reasonBtnActive]}
-                onPress={() => setCancelReason('loss')}
-              >
-                <Text style={styles.reasonText}>Perte (client parti)</Text>
-              </TouchableOpacity>
+              {targetOrder?.kitchen_status === 'ready' ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.reasonBtn, cancelReason === 'damage' && styles.reasonBtnActive]}
+                    onPress={() => setCancelReason('damage')}
+                  >
+                    <Text style={styles.reasonText}>Degat (casse/renverse)</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.reasonBtn, cancelReason === 'loss' && styles.reasonBtnActive]}
+                    onPress={() => setCancelReason('loss')}
+                  >
+                    <Text style={styles.reasonText}>Perte (client parti)</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.reasonBtn, cancelReason === 'cancel' && styles.reasonBtnActive]}
+                  onPress={() => setCancelReason('cancel')}
+                >
+                  <Text style={styles.reasonText}>Annuler</Text>
+                </TouchableOpacity>
+              )}
             </View>
             <TextInput
               style={styles.noteInput}
-              placeholder="Note (optionnel)"
+              placeholder={targetOrder?.kitchen_status === 'ready' ? 'Note (optionnel)' : 'Note (optionnel, ex: client annule)'}
               placeholderTextColor={theme.textMuted}
               value={cancelNote}
               onChangeText={setCancelNote}
@@ -367,8 +512,8 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
                       </Text>
                     </View>
                     <Text style={styles.itemTotal}>{item.subtotal.toFixed(2)} DH</Text>
-                    <TouchableOpacity style={styles.damageBtn} onPress={() => openDamageModal(item)}>
-                      <Text style={styles.damageText}>DEGAT</Text>
+                    <TouchableOpacity style={styles.damageBtn} onPress={() => handleItemCancelPress(item)}>
+                      <Text style={styles.damageText}>ANNULER</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -381,6 +526,16 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
               <TouchableOpacity style={styles.modalBtn} onPress={() => setItemsModalVisible(false)}>
                 <Text style={styles.modalBtnText}>Fermer</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnPrimary]}
+                onPress={() => {
+                  if (!itemsOrder) return;
+                  setItemsModalVisible(false);
+                  openCancelModal(itemsOrder);
+                }}
+              >
+                <Text style={styles.modalBtnTextPrimary}>Annuler commande</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -391,38 +546,81 @@ export default function OrdersScreen({ navigation }: OrdersScreenProps) {
         visible={damageModalVisible}
         animationType="fade"
         presentationStyle="overFullScreen"
-        onRequestClose={() => setDamageModalVisible(false)}
+        onRequestClose={() => closeDamageModal({ reopenItems: returnToItemsAfterDamage })}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Retirer l'article</Text>
+            <Text style={styles.modalTitle}>Annuler un article</Text>
             <Text style={styles.modalSub}>
               {targetItem ? `${targetItem.product_name} (x${targetItem.quantity})` : ''}
             </Text>
-            <Text style={styles.modalSub}>Indiquer la raison du degat</Text>
-            <View style={styles.reasonRow}>
-              <TouchableOpacity style={styles.reasonBtn} onPress={() => setDamageNote('Casse')}>
-                <Text style={styles.reasonText}>Casse</Text>
+            <View style={styles.qtyRow}>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => updateItemCancelQty(parseQty(itemCancelQty, targetItem?.quantity || 1) - 1)}
+              >
+                <Text style={styles.qtyBtnText}>-</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.reasonBtn} onPress={() => setDamageNote('Renverse')}>
-                <Text style={styles.reasonText}>Renverse</Text>
+              <TextInput
+                style={styles.qtyInput}
+                keyboardType="numeric"
+                value={itemCancelQty}
+                onChangeText={(textValue) => setItemCancelQty(textValue.replace(/[^0-9]/g, ''))}
+                onBlur={normalizeItemCancelQty}
+              />
+              <Text style={styles.qtyMax}>/ {targetItem?.quantity ?? 1}</Text>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => updateItemCancelQty(parseQty(itemCancelQty, targetItem?.quantity || 1) + 1)}
+              >
+                <Text style={styles.qtyBtnText}>+</Text>
               </TouchableOpacity>
             </View>
+            {itemsOrder?.kitchen_status === 'ready' ? (
+              <>
+                <Text style={styles.modalSub}>Commande prete: choisir Degat ou Perte</Text>
+                <View style={styles.reasonRow}>
+                  <TouchableOpacity
+                    style={[styles.reasonBtn, itemCancelReason === 'damage' && styles.reasonBtnActive]}
+                    onPress={() => setItemCancelReason('damage')}
+                  >
+                    <Text style={styles.reasonText}>Degat</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.reasonBtn, itemCancelReason === 'loss' && styles.reasonBtnActive]}
+                    onPress={() => setItemCancelReason('loss')}
+                  >
+                    <Text style={styles.reasonText}>Perte</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <Text style={styles.modalSub}>Commande pas encore prete: annulation simple</Text>
+            )}
             <TextInput
               style={styles.noteInput}
-              placeholder="Raison detaillee"
+              placeholder="Note (optionnel)"
               placeholderTextColor={theme.textMuted}
               value={damageNote}
               onChangeText={setDamageNote}
             />
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalBtn} onPress={() => setDamageModalVisible(false)} disabled={damageSubmitting}>
+
+              <TouchableOpacity
+                style={styles.modalBtn}
+                onPress={() => closeDamageModal({ reopenItems: returnToItemsAfterDamage })}
+                disabled={damageSubmitting}
+              >
                 <Text style={styles.modalBtnText}>Retour</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnPrimary, !damageNote.trim() && styles.modalBtnDisabled]}
+                style={[
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  itemsOrder?.kitchen_status === 'ready' && !itemCancelReason && styles.modalBtnDisabled,
+                ]}
                 onPress={handleRemoveDamage}
-                disabled={!damageNote.trim() || damageSubmitting}
+                disabled={(itemsOrder?.kitchen_status === 'ready' && !itemCancelReason) || damageSubmitting}
               >
                 <Text style={styles.modalBtnTextPrimary}>Confirmer</Text>
               </TouchableOpacity>
@@ -479,6 +677,18 @@ const getStyles = (
     cardRight: { alignItems: 'flex-end', gap: 8 },
     tableText: { color: theme.textMain, fontWeight: '700', fontSize: 15, marginBottom: 5 },
     dateText: { color: theme.textMuted, fontSize: 12 },
+    kitchenTag: {
+      marginTop: 6,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 999,
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#fff',
+    },
+    kitchenReady: { backgroundColor: theme.success },
+    kitchenRejected: { backgroundColor: theme.danger },
     totalText: { color: theme.primary, fontWeight: '700', fontSize: 18 },
     actionRow: { flexDirection: 'row', gap: 8 },
     payBtn: {
@@ -533,6 +743,41 @@ const getStyles = (
     },
     summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
     summaryText: { color: theme.textMain, fontWeight: '600', fontSize: 12 },
+    adjustRow: { marginTop: 10 },
+    adjustBtn: {
+      alignSelf: 'flex-start',
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      backgroundColor: theme.surfaceGlass,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    adjustBtnText: { color: theme.textMain, fontWeight: '600', fontSize: 12 },
+    qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
+    qtyBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: 8,
+      backgroundColor: theme.surfaceGlass,
+      borderWidth: 1,
+      borderColor: theme.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    qtyBtnText: { color: theme.textMain, fontWeight: '700' },
+    qtyInput: {
+      minWidth: 50,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 8,
+      paddingVertical: 4,
+      paddingHorizontal: 8,
+      textAlign: 'center',
+      color: theme.textMain,
+      backgroundColor: theme.bgSurface,
+    },
+    qtyMax: { color: theme.textMuted, fontWeight: '600' },
     reasonRow: { gap: 10, marginTop: 14 },
     reasonBtn: {
       backgroundColor: theme.surfaceGlass,

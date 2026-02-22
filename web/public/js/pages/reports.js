@@ -112,6 +112,7 @@ async function loadReportsData() {
 
     try {
         let items = [];
+        let itemsError = null;
         const primary = await sb.from('order_items')
             .select(`
                 net_quantity,
@@ -131,28 +132,34 @@ async function loadReportsData() {
                 .eq('status', 'completed');
 
             if (orderIdsError) {
-                throw orderIdsError;
-            }
-
-            const ids = (orderIds || []).map(o => o.id);
-            if (!ids.length) {
-                items = [];
+                itemsError = orderIdsError;
             } else {
-                const fallback = await sb.from('order_items')
-                    .select(`
-                        quantity,
-                        subtotal,
-                        products (name)
-                    `)
-                    .in('order_id', ids);
+                const ids = (orderIds || []).map(o => o.id);
+                if (!ids.length) {
+                    items = [];
+                } else {
+                    const fallback = await sb.from('order_items')
+                        .select(`
+                            quantity,
+                            subtotal,
+                            products (name)
+                        `)
+                        .in('order_id', ids);
 
-                if (fallback.error) {
-                    throw fallback.error;
+                    if (fallback.error) {
+                        itemsError = fallback.error;
+                    } else {
+                        items = fallback.data || [];
+                    }
                 }
-                items = fallback.data || [];
             }
         } else {
             items = primary.data || [];
+        }
+
+        if (itemsError) {
+            console.error('Erreur Reports (items):', itemsError);
+            items = [];
         }
 
         let totalRev = 0;
@@ -162,7 +169,7 @@ async function loadReportsData() {
         items.forEach(item => {
             totalRev += toNumber(item.net_subtotal ?? item.subtotal);
             totalQty += toNumber(item.net_quantity ?? item.quantity);
-            
+
             const pName = item.products?.name || 'Produit Inconnu';
             productStats[pName] = (productStats[pName] || 0) + toNumber(item.net_quantity ?? item.quantity);
         });
@@ -177,48 +184,113 @@ async function loadReportsData() {
 
         renderReportChart(sortedProducts);
 
-        const { data: orders, error: ordersError } = await sb.from('orders')
-            .select('total_amount, status, users!orders_user_id_fkey(first_name, last_name)')
-            .gte('created_at', start)
-            .lte('created_at', end)
-            .eq('status', 'completed');
+        try {
+            const { data: orders, error: ordersError } = await sb.from('orders')
+                .select('total_amount, status, users!orders_user_id_fkey(first_name, last_name)')
+                .gte('created_at', start)
+                .lte('created_at', end)
+                .eq('status', 'completed');
 
-        if (ordersError) throw ordersError;
+            if (ordersError) throw ordersError;
 
-        const perfMap = new Map();
-        (orders || []).forEach(o => {
-            const name = o.users ? `${o.users.first_name || ''} ${o.users.last_name || ''}`.trim() : 'Sans assignation';
-            const current = perfMap.get(name) || { count: 0, total: 0 };
-            current.count += 1;
-            current.total += toNumber(o.total_amount);
-            perfMap.set(name, current);
+            const perfMap = new Map();
+            (orders || []).forEach(o => {
+                const name = o.users ? `${o.users.first_name || ''} ${o.users.last_name || ''}`.trim() : 'Sans assignation';
+                const current = perfMap.get(name) || { count: 0, total: 0 };
+                current.count += 1;
+                current.total += toNumber(o.total_amount);
+                perfMap.set(name, current);
+            });
+
+            const perfRows = Array.from(perfMap.entries())
+                .sort((a, b) => (b[1].total - a[1].total)
+                    || (b[1].count - a[1].count)
+                    || String(a[0]).localeCompare(String(b[0]))
+                )
+                .map(([name, stats]) => `
+                    <tr>
+                        <td>${escapeHtml(name)}</td>
+                        <td class="text-center">${stats.count}</td>
+                        <td class="text-center font-bold">${formatMoney(stats.total)}</td>
+                        <td class="text-center">${formatMoney(stats.count ? stats.total / stats.count : 0)}</td>
+                    </tr>
+                `).join('');
+
+            document.getElementById('emp-perf-list').innerHTML = perfRows || '<tr><td colspan="4" class="text-center text-muted">Aucune donnée.</td></tr>';
+        } catch (e) {
+            console.error('Erreur Reports (performance):', e);
+            document.getElementById('emp-perf-list').innerHTML = '<tr><td colspan="4" class="text-center text-muted">Erreur de chargement.</td></tr>';
+        }
+
+        let losses = [];
+        try {
+            const { data: lossData, error: lossError } = await sb.from('stock_logs')
+                .select('product_id, user_id, change_amount, reason, created_at, notes, products(name), users(first_name, last_name)')
+                .in('reason', ['damage', 'waste'])
+                .gte('created_at', start)
+                .lte('created_at', end);
+
+            if (lossError) throw lossError;
+            losses = lossData || [];
+        } catch (e) {
+            console.error('Erreur Reports (stock logs):', e);
+            losses = [];
+        }
+
+        let cancelledOrders = [];
+        try {
+            const { data: cancelledData, error: cancelledError } = await sb.from('orders')
+                .select('user_id, cancelled_at, updated_at, created_at, cancel_reason, cancel_note, users(first_name, last_name), order_items(product_id, quantity, products(name))')
+                .eq('status', 'cancelled')
+                .in('cancel_reason', ['damage', 'loss'])
+                .gte('cancelled_at', start)
+                .lte('cancelled_at', end);
+
+            if (cancelledError) throw cancelledError;
+            cancelledOrders = cancelledData || [];
+        } catch (e) {
+            console.error('Erreur Reports (annulations):', e);
+            cancelledOrders = [];
+        }
+
+        const lossLogsIndex = (losses || []).map(l => ({
+            product_id: l.product_id,
+            user_id: l.user_id,
+            qty: Math.abs(toNumber(l.change_amount)),
+            ts: new Date(l.created_at).getTime()
+        }));
+
+        const orderLosses = (cancelledOrders || []).flatMap(o => {
+            const when = o.cancelled_at || o.updated_at || o.created_at;
+            const reason = o.cancel_reason === 'loss' ? 'waste' : 'damage';
+            const items = o.order_items || [];
+            return items.map(item => ({
+                created_at: when,
+                reason,
+                notes: o.cancel_note,
+                products: item.products || { name: 'Produit' },
+                users: o.users,
+                product_id: item.product_id,
+                user_id: o.user_id,
+                change_amount: -Math.abs(toNumber(item.quantity))
+            }));
+        }).filter(entry => {
+            const entryTs = new Date(entry.created_at).getTime();
+            return !lossLogsIndex.some(log =>
+                log.product_id === entry.product_id &&
+                log.qty === Math.abs(toNumber(entry.change_amount)) &&
+                (log.user_id || null) === (entry.user_id || null) &&
+                Math.abs(log.ts - entryTs) <= 5 * 60 * 1000
+            );
         });
 
-        const perfRows = Array.from(perfMap.entries())
-            .sort((a, b) => b[1].total - a[1].total)
-            .map(([name, stats]) => `
-                <tr>
-                    <td>${escapeHtml(name)}</td>
-                    <td class="text-center">${stats.count}</td>
-                    <td class="text-center font-bold">${formatMoney(stats.total)}</td>
-                    <td class="text-center">${formatMoney(stats.count ? stats.total / stats.count : 0)}</td>
-                </tr>
-            `).join('');
-
-        document.getElementById('emp-perf-list').innerHTML = perfRows || '<tr><td colspan="4" class="text-center text-muted">Aucune donnée.</td></tr>';
-
-        const { data: losses, error: lossError } = await sb.from('stock_logs')
-            .select('change_amount, reason, created_at, notes, products(name), users(first_name, last_name)')
-            .in('reason', ['damage', 'waste'])
-            .gte('created_at', start)
-            .lte('created_at', end)
-            .order('created_at', { ascending: false })
-            .limit(20);
-
-        if (lossError) throw lossError;
-
-        const totalLoss = (losses || []).reduce((sum, l) => sum + Math.abs(toNumber(l.change_amount)), 0);
+        const allLosses = [...(losses || []), ...orderLosses];
+        const totalLoss = allLosses.reduce((sum, l) => sum + Math.abs(toNumber(l.change_amount)), 0);
         document.getElementById('loss-total').textContent = `Total: ${totalLoss}`;
+
+        const recentLosses = allLosses
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+            .slice(0, 20);
 
         const toCauseLabel = (entry) => {
             const raw = (entry?.notes || '').toString().trim().toLowerCase();
@@ -233,7 +305,7 @@ async function loadReportsData() {
             return '—';
         };
 
-        const lossRows = (losses || []).map(l => {
+        const lossRows = (recentLosses || []).map(l => {
             const empName = l.users ? `${l.users.first_name || ''} ${l.users.last_name || ''}`.trim() : '';
             return `
             <tr>
@@ -297,7 +369,7 @@ function renderReportChart(dataArray) {
                     grid: { color: 'rgba(15, 23, 42, 0.08)' },
                     ticks: {
                         color: '#475569',
-                        stepSize: 5,
+                        stepSize: 10,
                         precision: 0
                     }
                 },

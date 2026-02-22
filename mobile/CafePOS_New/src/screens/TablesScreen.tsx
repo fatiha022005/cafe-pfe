@@ -93,11 +93,9 @@ export default function TablesScreen({ navigation }: Props) {
     );
   };
 
-  const roleLabel = user?.role === 'admin' ? 'ADMIN' : 'SERVEUR';
-
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={roleLabel} />
+      <TopBar title="CafePOS" />
       <QuickNav current="Tables" />
 
       <View style={styles.headerBox}>

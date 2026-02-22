@@ -82,6 +82,7 @@ const mockPendingOrders = (): PendingOrderItem[] => [
     status: 'pending',
     table_id: 'T3',
     table_label: 'T3',
+    kitchen_status: 'new',
   },
 ];
 
@@ -121,6 +122,10 @@ const normalizePending = (order: any): PendingOrderItem => ({
   session_id: order.session_id ?? null,
   cancel_reason: order.cancel_reason ?? null,
   cancel_note: order.cancel_note ?? null,
+  kitchen_status: order.kitchen_status ?? null,
+  kitchen_reason: order.kitchen_reason ?? null,
+  kitchen_note: order.kitchen_note ?? null,
+  kitchen_updated_at: order.kitchen_updated_at ?? null,
 });
 
 const toUser = (row: LoginUserRow): User => {
@@ -200,7 +205,6 @@ export const apiService = {
     const { data, error } = await supabase
       .from('tables')
       .select('id, label, capacity, is_active')
-      .eq('is_active', true)
       .order('label', { ascending: true });
 
     if (error) {
@@ -351,12 +355,37 @@ export const apiService = {
     }
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_pending_orders', { p_user_id: userId });
-    if (rpcError) {
+    if (!rpcError) {
+      const normalized = (rpcData ?? []).map(item => normalizePending(item));
+      return { data: normalized, error: null };
+    }
+
+    const msg = String(rpcError.message || '');
+    const lower = msg.toLowerCase();
+    const missingFn =
+      msg.includes('get_pending_orders') ||
+      lower.includes('does not exist') ||
+      lower.includes('schema cache');
+
+    if (!missingFn) {
       return { data: null, error: rpcError };
     }
 
-    const normalized = (rpcData ?? []).map(item => normalizePending(item));
-    return { data: normalized, error: null };
+    const { data: fallbackData, error: fallbackError } = await supabase
+      .from('orders')
+      .select(
+        'id, order_number, total_amount, created_at, status, user_id, table_id, session_id, cancel_reason, cancel_note, kitchen_status, kitchen_reason, kitchen_note, kitchen_updated_at, tables(label)'
+      )
+      .eq('status', 'pending')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (fallbackError) {
+      return { data: null, error: fallbackError };
+    }
+
+    const fallbackNormalized = (fallbackData ?? []).map(item => normalizePending(item));
+    return { data: fallbackNormalized, error: null };
   },
 
   getPendingOrderItems: async (orderId: string | null | undefined, userId: string | null | undefined) => {
@@ -457,6 +486,48 @@ export const apiService = {
       | null
       | undefined;
     return { data: row ?? null, error: null };
+  },
+
+  cancelPendingOrderItem: async (input: {
+    orderId: string;
+    itemId: string;
+    userId: string;
+    reason?: 'cancel' | 'damage' | 'loss' | null;
+    note?: string | null;
+    cancelQty?: number | null;
+  }) => {
+    if (!supabase) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      return { data: null, error: null };
+    }
+
+    const { data, error } = await supabase.rpc('cancel_pending_order_item', {
+      p_order_id: input.orderId,
+      p_item_id: input.itemId,
+      p_user_id: input.userId,
+      p_reason: input.reason ?? null,
+      p_note: input.note ?? null,
+      p_cancel_qty: input.cancelQty ?? null,
+    });
+
+    if (error) {
+      const msg = String(error.message || '');
+      if (msg.includes('order_not_found_or_not_pending')) {
+        return { data: null, error: new Error('Commande introuvable ou deja cloturee') };
+      }
+      if (msg.includes('item_not_found')) {
+        return { data: null, error: new Error('Article introuvable') };
+      }
+      if (msg.includes('invalid_reason')) {
+        return { data: null, error: new Error('Raison invalide') };
+      }
+      if (msg.includes('invalid_cancel_qty')) {
+        return { data: null, error: new Error('Quantite invalide') };
+      }
+      return { data: null, error: new Error(msg || 'Erreur lors de l\'annulation') };
+    }
+
+    return { data, error: null };
   },
 
   completePendingOrder: async (input: {

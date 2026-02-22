@@ -57,7 +57,7 @@ export default function LoginScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle="ADMIN" showThemeToggle />
+      <TopBar title="CafePOS" showThemeToggle />
 
       <Text style={styles.title}>AUTHENTIFICATION</Text>
 

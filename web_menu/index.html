@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CafePOS | Menu</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f6efe7;
+      --ink: #1a1a1a;
+      --muted: #6b5e54;
+      --accent: #c85c2a;
+      --accent-soft: rgba(200, 92, 42, 0.12);
+      --card: #fffaf4;
+      --border: rgba(26, 26, 26, 0.08);
+      --shadow: 0 18px 40px rgba(26, 26, 26, 0.15);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Manrope", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .hero {
+      position: relative;
+      padding: 48px 20px 36px;
+      overflow: hidden;
+    }
+    .hero::before,
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: radial-gradient(circle at top, rgba(200, 92, 42, 0.35), transparent 70%);
+      top: -120px;
+      right: -80px;
+      z-index: 0;
+    }
+    .hero::after {
+      width: 280px;
+      height: 280px;
+      top: 40px;
+      left: -120px;
+      background: radial-gradient(circle at top, rgba(26, 26, 26, 0.18), transparent 70%);
+    }
+    .hero-inner {
+      position: relative;
+      max-width: 1080px;
+      margin: 0 auto;
+      display: grid;
+      gap: 24px;
+      z-index: 1;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .logo {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #e8b07f, #c85c2a 60%, #7a2f14);
+      color: #fff5e8;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+      letter-spacing: 0.08em;
+    }
+    .brand h1 {
+      margin: 0;
+      font-family: "Fraunces", serif;
+      font-weight: 700;
+      font-size: 1.8rem;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .hero-content {
+      display: grid;
+      gap: 16px;
+      max-width: 700px;
+    }
+    .hero-title {
+      font-family: "Fraunces", serif;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      margin: 0;
+      line-height: 1.1;
+    }
+    .hero-sub {
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin: 0;
+    }
+    .hero-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .tag {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid rgba(200, 92, 42, 0.2);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .content {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 20px 60px;
+      display: grid;
+      gap: 18px;
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .filter-btn {
+      border: 1px solid var(--border);
+      background: transparent;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--ink);
+    }
+    .filter-btn.active {
+      background: var(--ink);
+      color: #fff;
+      border-color: transparent;
+    }
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .menu-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+    .menu-card .pill {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      background: rgba(26, 26, 26, 0.08);
+      color: var(--ink);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .menu-card h3,
+    .menu-card p {
+      padding-right: 96px;
+    }
+    .menu-card h3 {
+      margin: 0;
+      font-family: "Fraunces", serif;
+      font-size: 1.2rem;
+    }
+    .menu-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+    .price {
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+    .info-strip {
+      background: #1a1a1a;
+      color: #fff;
+      padding: 18px;
+      border-radius: 16px;
+      display: grid;
+      gap: 6px;
+    }
+    .info-strip strong {
+      font-size: 1.05rem;
+    }
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      padding-bottom: 30px;
+    }
+    @media (max-width: 720px) {
+      .hero {
+        padding-top: 36px;
+      }
+      .menu-card {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="brand">
+        <div class="logo">CP</div>
+        <div>
+          <h1>CafePOS</h1>
+          <p>Menu client</p>
+        </div>
+      </div>
+
+      <div class="hero-content">
+        <h2 class="hero-title">Bienvenue, prenez le temps de choisir.</h2>
+        <p class="hero-sub">
+          Scannez le QR code, explorez notre selection et appelez le serveur quand vous etes pret.
+        </p>
+        <div class="hero-tags">
+          <span class="tag">Fait maison</span>
+          <span class="tag">Cafe de specialite</span>
+          <span class="tag">Options sans sucre</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <main class="content">
+    <div class="filters" role="tablist" aria-label="Categories">
+      <button class="filter-btn active" data-filter="all" role="tab" aria-selected="true">Tout</button>
+    </div>
+
+    <div class="info-strip">
+      <strong>Astuce</strong>
+      <span>Les plats sont prepares a la commande. Merci de signaler vos allergies au serveur.</span>
+    </div>
+
+    <section class="menu-grid" id="menu-grid"></section>
+  </main>
+
+  <footer class="footer">
+    Merci de votre visite. Prix TTC.
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://nmwqihsbedoyxupqwime.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5td3FpaHNiZWRveXh1cHF3aW1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NTgxMTUsImV4cCI6MjA4NjMzNDExNX0.eXmA88UCSMGr8xUnpULZQBAIwaxaL_XM4HO5B7Nfp2o';
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const filtersEl = document.querySelector('.filters');
+    const menuGrid = document.getElementById('menu-grid');
+
+    const labelMap = {
+      cafe: 'Cafes',
+      froid: 'Boissons froides',
+      sale: 'Sale',
+      sucre: 'Sucre',
+      signature: 'Signature',
+    };
+
+    const escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const slugify = (value) =>
+      String(value ?? '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '')
+        .trim();
+
+    const setActive = (selected) => {
+      const buttons = Array.from(document.querySelectorAll('.filter-btn'));
+      buttons.forEach((btn) => {
+        const active = btn === selected;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    };
+
+    const applyFilter = (filter) => {
+      const cards = Array.from(document.querySelectorAll('.menu-card'));
+      cards.forEach((card) => {
+        const match = filter === 'all' || card.dataset.category === filter;
+        card.style.display = match ? 'grid' : 'none';
+      });
+    };
+
+    const buildFilters = (categories) => {
+      if (!filtersEl) return;
+      const buttons = ['all', ...categories].map((cat, index) => {
+        const label = cat === 'all' ? 'Tout' : (labelMap[cat] || cat);
+        const active = index === 0 ? 'active' : '';
+        const selected = index === 0 ? 'true' : 'false';
+        return `<button class="filter-btn ${active}" data-filter="${cat}" role="tab" aria-selected="${selected}">${label}</button>`;
+      }).join('');
+      filtersEl.innerHTML = buttons;
+
+      filtersEl.querySelectorAll('.filter-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          setActive(btn);
+          applyFilter(btn.dataset.filter);
+        });
+      });
+    };
+
+    const renderMenu = (products) => {
+      if (!menuGrid) return;
+      if (!products.length) {
+        menuGrid.innerHTML = '<div class="info-strip">Aucun produit disponible.</div>';
+        return;
+      }
+
+      const categories = Array.from(
+        new Set(products.map((p) => slugify(p.category || 'autre')).filter(Boolean))
+      );
+      buildFilters(categories);
+
+      menuGrid.innerHTML = products.map((p) => {
+        const category = p.category || 'Autre';
+        const slug = slugify(category);
+        const label = labelMap[slug] || category;
+        const price = Number(p.price ?? 0).toFixed(2);
+        const desc = p.description ? escapeHtml(p.description) : ' ';
+        return `
+          <article class="menu-card" data-category="${slug}">
+            <span class="pill">${escapeHtml(label)}</span>
+            <h3>${escapeHtml(p.name)}</h3>
+            <p>${desc}</p>
+            <div class="price">${price} DH</div>
+          </article>
+        `;
+      }).join('');
+
+      applyFilter('all');
+    };
+
+    const loadMenu = async () => {
+      if (!menuGrid) return;
+      menuGrid.innerHTML = '<div class="info-strip">Chargement du menu...</div>';
+      const { data, error } = await sb
+        .from('products')
+        .select('name, category, price, description, is_available')
+        .eq('is_available', true)
+        .order('category', { ascending: true })
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error(error);
+        menuGrid.innerHTML = '<div class="info-strip">Erreur de chargement du menu.</div>';
+        return;
+      }
+
+      renderMenu(data || []);
+    };
+
+    loadMenu();
+  </script>
+</body>
+</html>

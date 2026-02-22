@@ -24,8 +24,6 @@ export default function CheckoutScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const styles = getStyles(theme, s, insets);
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
   const confirmRemove = (item: CartItem) => {
     Alert.alert('Supprimer ?', `Voulez-vous retirer ${item.name} ?`, [
       { text: 'Non', style: 'cancel' },
@@ -43,10 +41,6 @@ export default function CheckoutScreen({ navigation }: Props) {
       navigation.navigate('Session');
       return;
     }
-    if (!activeTable?.id) {
-      Alert.alert('Table requise', 'Selectionnez une table pour enregistrer la commande.');
-      return;
-    }
     if (cart.length === 0) {
       Alert.alert('Erreur', 'Le panier est vide');
       return;
@@ -57,7 +51,7 @@ export default function CheckoutScreen({ navigation }: Props) {
       const { data, error } = await apiService.createOrAppendPendingOrder({
         userId: user.id,
         sessionId: activeSession.id,
-        tableId: activeTable.id,
+        tableId: activeTable?.id ?? null,
         items: cart,
       });
 
@@ -89,7 +83,7 @@ export default function CheckoutScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <TopBar title="CafePOS" />
       <QuickNav current="Vente" />
 
       <View style={styles.header}>
@@ -112,18 +106,11 @@ export default function CheckoutScreen({ navigation }: Props) {
 
       <View style={styles.actionsCard}>
         <TouchableOpacity
-          style={[styles.confirmBtn, (cart.length === 0 || !activeTable) && styles.disabledBtn]}
+          style={[styles.chargeBtn, (cart.length === 0 || loading) && styles.disabledBtn]}
           onPress={handleConfirmOrder}
-          disabled={cart.length === 0 || !activeTable || loading}
-        >
-          <Text style={styles.btnTextSecondary}>CONFIRMER (ATTENTE)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.chargeBtn, cart.length === 0 && styles.disabledBtn]}
-          onPress={() => cart.length > 0 && navigation.navigate('Paiement', { total })}
           disabled={cart.length === 0 || loading}
         >
-          <Text style={styles.btnTextPrimary}>ENCAISSER {total.toFixed(2)} DH</Text>
+          <Text style={styles.btnTextPrimary}>Envoyé vers cuisine</Text>
         </TouchableOpacity>
       </View>
 

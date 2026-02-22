@@ -83,7 +83,7 @@ export default function GrilleScreen({ navigation }: GrilleScreenProps) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <TopBar title="CafePOS" />
       <QuickNav current="Vente" />
 
       <View style={styles.header}>

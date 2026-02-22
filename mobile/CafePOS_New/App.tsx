@@ -20,6 +20,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import CheckoutScreen from './src/screens/CheckoutScreen';
 import PaymentScreen from './src/screens/PaymentScreen';
 import SessionScreen from './src/screens/SessionScreen';
+import AppDrawerContent from './src/components/AppDrawerContent';
 
 const Stack = createStackNavigator<RootStackParamList>();
 const Drawer = createDrawerNavigator<DrawerParamList>();
@@ -29,9 +30,12 @@ function MainDrawer() {
   return (
     <Drawer.Navigator
       id="MainDrawer"
+      drawerContent={(props) => <AppDrawerContent {...props} />}
       screenOptions={{
         headerShown: false,
         drawerStyle: { backgroundColor: theme.bgSurface, width: 260 },
+        drawerItemStyle: { borderRadius: 12, marginHorizontal: 12, marginVertical: 4 },
+        drawerLabelStyle: { fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', fontSize: 12 },
         drawerActiveTintColor: theme.primary,
         drawerInactiveTintColor: theme.textMain,
         drawerType: 'front',

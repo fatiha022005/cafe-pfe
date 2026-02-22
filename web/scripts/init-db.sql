@@ -154,6 +154,10 @@ CREATE TABLE public.orders (
     cancel_note TEXT,
     cancelled_at TIMESTAMP WITH TIME ZONE,
     cancelled_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    kitchen_status TEXT DEFAULT 'new' CHECK (kitchen_status IN ('new', 'ready', 'rejected')),
+    kitchen_reason TEXT,
+    kitchen_note TEXT,
+    kitchen_updated_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     CONSTRAINT orders_order_number_key UNIQUE (order_number)
@@ -161,6 +165,11 @@ CREATE TABLE public.orders (
 
 -- Ensure session_id exists for existing databases
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS session_id uuid;
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS kitchen_status text DEFAULT 'new',
+    ADD COLUMN IF NOT EXISTS kitchen_reason text,
+    ADD COLUMN IF NOT EXISTS kitchen_note text,
+    ADD COLUMN IF NOT EXISTS kitchen_updated_at timestamptz;
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -172,6 +181,19 @@ BEGIN
         ALTER TABLE public.orders
             ADD CONSTRAINT orders_session_id_fkey
             FOREIGN KEY (session_id) REFERENCES public.sessions_serveurs(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE constraint_name = 'orders_kitchen_status_check'
+          AND table_name = 'orders'
+    ) THEN
+        ALTER TABLE public.orders
+            ADD CONSTRAINT orders_kitchen_status_check
+            CHECK (kitchen_status IN ('new', 'ready', 'rejected') OR kitchen_status IS NULL);
     END IF;
 END $$;
 
@@ -865,7 +887,11 @@ RETURNS TABLE (
     table_label text,
     session_id uuid,
     cancel_reason text,
-    cancel_note text
+    cancel_note text,
+    kitchen_status text,
+    kitchen_reason text,
+    kitchen_note text,
+    kitchen_updated_at timestamptz
 )
 LANGUAGE sql
 SECURITY DEFINER
@@ -873,7 +899,8 @@ SET search_path = public
 AS $$
     SELECT o.id, o.order_number, o.total_amount, o.created_at, o.status,
            o.user_id, o.table_id, t.label as table_label, o.session_id,
-           o.cancel_reason, o.cancel_note
+           o.cancel_reason, o.cancel_note,
+           o.kitchen_status, o.kitchen_reason, o.kitchen_note, o.kitchen_updated_at
     FROM public.orders o
     LEFT JOIN public.tables t ON t.id = o.table_id
     WHERE o.status = 'pending'
@@ -1161,7 +1188,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.complete_pending_order(uuid, uuid, text, uuid, numeric, numeric) TO anon, authenticated;
 
--- 8.9 Cancel pending order (no stock movement)
+-- 8.9 Cancel pending order (kitchen-aware)
 CREATE OR REPLACE FUNCTION public.cancel_pending_order(
     p_order_id uuid,
     p_user_id uuid,
@@ -1185,6 +1212,10 @@ SET search_path = public
 AS $$
 DECLARE
     v_order public.orders%ROWTYPE;
+    v_item record;
+    v_log_reason text;
+    v_note text;
+    v_cancel_reason text;
 BEGIN
     IF p_order_id IS NULL THEN
         RAISE EXCEPTION 'order_required';
@@ -1193,18 +1224,61 @@ BEGIN
         RAISE EXCEPTION 'user_required';
     END IF;
 
-    UPDATE public.orders o
-    SET status = 'cancelled',
-        cancel_reason = p_reason,
-        cancel_note = p_note,
-        cancelled_at = now(),
-        cancelled_by = p_user_id,
-        updated_at = now()
-    WHERE o.id = p_order_id AND o.status = 'pending'
-    RETURNING * INTO v_order;
+    SELECT *
+    INTO v_order
+    FROM public.orders o
+    WHERE o.id = p_order_id AND o.status = 'pending';
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'order_not_found_or_not_pending';
+    END IF;
+
+    IF v_order.kitchen_status = 'ready' THEN
+        IF p_reason NOT IN ('damage', 'loss') THEN
+            RAISE EXCEPTION 'invalid_reason';
+        END IF;
+        v_cancel_reason := p_reason;
+        v_log_reason := CASE WHEN p_reason = 'loss' THEN 'waste' ELSE 'damage' END;
+        v_note := COALESCE(p_note, CASE WHEN p_reason = 'loss' THEN 'Perte commande' ELSE 'Degat commande' END);
+
+        UPDATE public.orders o
+        SET status = 'cancelled',
+            cancel_reason = v_cancel_reason,
+            cancel_note = p_note,
+            cancelled_at = now(),
+            cancelled_by = p_user_id,
+            updated_at = now()
+        WHERE o.id = p_order_id AND o.status = 'pending'
+        RETURNING * INTO v_order;
+
+        FOR v_item IN
+            SELECT oi.product_id, oi.quantity
+            FROM public.order_items oi
+            WHERE oi.order_id = p_order_id
+        LOOP
+            UPDATE public.products p
+            SET stock_quantity = COALESCE(p.stock_quantity, 0) - COALESCE(v_item.quantity, 0)
+            WHERE p.id = v_item.product_id;
+
+            INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
+            VALUES (v_item.product_id, p_user_id, -COALESCE(v_item.quantity, 0), v_log_reason, v_note);
+        END LOOP;
+    ELSE
+        v_cancel_reason := COALESCE(NULLIF(p_reason, ''), 'cancel');
+        IF v_cancel_reason NOT IN ('cancel') THEN
+            RAISE EXCEPTION 'invalid_reason';
+        END IF;
+        v_note := COALESCE(p_note, 'Annulation commande');
+
+        UPDATE public.orders o
+        SET status = 'cancelled',
+            cancel_reason = v_cancel_reason,
+            cancel_note = p_note,
+            cancelled_at = now(),
+            cancelled_by = p_user_id,
+            updated_at = now()
+        WHERE o.id = p_order_id AND o.status = 'pending'
+        RETURNING * INTO v_order;
     END IF;
 
     RETURN QUERY
@@ -1539,6 +1613,131 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.remove_pending_order_item_damage(uuid, uuid, uuid, text) TO anon, authenticated;
 
+-- 8.13b Cancel pending order item (kitchen-aware)
+CREATE OR REPLACE FUNCTION public.cancel_pending_order_item(
+    p_order_id uuid,
+    p_item_id uuid,
+    p_user_id uuid,
+    p_reason text DEFAULT NULL,
+    p_note text DEFAULT NULL,
+    p_cancel_qty int DEFAULT NULL
+)
+RETURNS TABLE (
+    order_id uuid,
+    order_number int,
+    total_amount numeric,
+    status text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_order public.orders%ROWTYPE;
+    v_item public.order_items%ROWTYPE;
+    v_remaining int;
+    v_log_reason text;
+    v_note text;
+    v_reason text;
+    v_cancel_qty int;
+BEGIN
+    IF p_user_id IS NULL THEN
+        RAISE EXCEPTION 'user_required';
+    END IF;
+
+    SELECT * INTO v_order
+    FROM public.orders o
+    WHERE o.id = p_order_id
+      AND o.user_id = p_user_id
+      AND o.status = 'pending'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'order_not_found_or_not_pending';
+    END IF;
+
+    SELECT * INTO v_item
+    FROM public.order_items oi
+    WHERE oi.id = p_item_id
+      AND oi.order_id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'item_not_found';
+    END IF;
+
+    IF v_order.kitchen_status = 'ready' THEN
+        IF p_reason NOT IN ('damage', 'loss') THEN
+            RAISE EXCEPTION 'invalid_reason';
+        END IF;
+        v_reason := p_reason;
+        v_log_reason := CASE WHEN p_reason = 'loss' THEN 'waste' ELSE 'damage' END;
+        v_note := COALESCE(p_note, CASE WHEN p_reason = 'loss' THEN 'Perte article' ELSE 'Degat article' END);
+    ELSE
+        v_reason := 'cancel';
+        v_note := COALESCE(p_note, 'Annulation article');
+    END IF;
+
+    v_cancel_qty := COALESCE(p_cancel_qty, v_item.quantity);
+    IF v_cancel_qty <= 0 OR v_cancel_qty > v_item.quantity THEN
+        RAISE EXCEPTION 'invalid_cancel_qty';
+    END IF;
+
+    IF v_cancel_qty < v_item.quantity THEN
+        UPDATE public.order_items
+        SET quantity = v_item.quantity - v_cancel_qty
+        WHERE id = p_item_id;
+    ELSE
+        DELETE FROM public.order_items
+        WHERE id = p_item_id;
+    END IF;
+
+    IF v_order.kitchen_status = 'ready' THEN
+        INSERT INTO public.order_item_damages (order_id, order_item_id, product_id, user_id, quantity, reason_note)
+        VALUES (p_order_id, v_item.id, v_item.product_id, p_user_id, v_cancel_qty, v_note);
+
+        UPDATE public.products p
+        SET stock_quantity = COALESCE(p.stock_quantity, 0) - COALESCE(v_cancel_qty, 0)
+        WHERE p.id = v_item.product_id;
+
+        INSERT INTO public.stock_logs (product_id, user_id, change_amount, reason, notes)
+        VALUES (v_item.product_id, p_user_id, -COALESCE(v_cancel_qty, 0), v_log_reason, v_note);
+    END IF;
+
+    SELECT COUNT(*) INTO v_remaining
+    FROM public.order_items oi
+    WHERE oi.order_id = p_order_id;
+
+    IF v_remaining = 0 THEN
+        UPDATE public.orders
+        SET status = 'cancelled',
+            total_amount = 0,
+            cancel_reason = v_reason,
+            cancel_note = COALESCE(p_note, cancel_note),
+            cancelled_at = now(),
+            cancelled_by = p_user_id,
+            updated_at = now()
+        WHERE id = p_order_id
+        RETURNING * INTO v_order;
+    ELSE
+        UPDATE public.orders o
+        SET total_amount = (
+            SELECT COALESCE(SUM(oi.quantity * oi.unit_price), 0)
+            FROM public.order_items oi
+            WHERE oi.order_id = p_order_id
+        ),
+            updated_at = now()
+        WHERE o.id = p_order_id
+        RETURNING * INTO v_order;
+    END IF;
+
+    RETURN QUERY
+    SELECT v_order.id, v_order.order_number, v_order.total_amount, v_order.status;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.cancel_pending_order_item(uuid, uuid, uuid, text, text, int) TO anon, authenticated;
+
 -- 8.14 Adjust stock + log (admin only)
 CREATE OR REPLACE FUNCTION public.adjust_stock(
     p_user_id uuid,
@@ -1566,10 +1765,10 @@ BEGIN
         RAISE EXCEPTION 'change_amount_required';
     END IF;
 
-    UPDATE public.products
-    SET stock_quantity = COALESCE(stock_quantity, 0) + p_change_amount
-    WHERE id = p_product_id
-    RETURNING stock_quantity INTO v_stock;
+    UPDATE public.products p
+    SET stock_quantity = COALESCE(p.stock_quantity, 0) + p_change_amount
+    WHERE p.id = p_product_id
+    RETURNING p.stock_quantity INTO v_stock;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'product_not_found';

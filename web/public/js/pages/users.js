@@ -8,7 +8,7 @@ window.renderUsers = async function() {
             <h3>Équipe</h3>
             <div class="flex gap-2">
                 <button class="btn-secondary" onclick="openAdminModal()">+ Admin Web</button>
-                <button class="btn-primary" onclick="openUserModal()">+ Nouveau Membre</button>
+                <button class="btn-primary" onclick="openUserModal()">+ Ajouter un serveur</button>
             </div>
         </div>
         <div class="card table-wrapper">
@@ -82,7 +82,7 @@ window.openUserModal = function(userId = null) {
         <div class="modal-backdrop" id="u-modal">
             <div class="modal-window">
                 <div class="modal-head">
-                    <h3>${isEdit ? 'Modifier' : 'Ajouter'} Membre</h3>
+                    <h3>${isEdit ? 'Modifier' : 'Ajouter'} Serveur</h3>
                     <button class="close-modal" onclick="document.getElementById('u-modal').remove()">&times;</button>
                 </div>
                 <form id="user-form" onsubmit="handleUserSave(event)">
@@ -91,17 +91,12 @@ window.openUserModal = function(userId = null) {
                     <div class="form-grid">
                         <div class="field"><label>Prénom</label><input type="text" name="first_name" value="${escapeHtml(user?.first_name || '')}" required class="input-std"></div>
                         <div class="field"><label>Nom</label><input type="text" name="last_name" value="${escapeHtml(user?.last_name || '')}" required class="input-std"></div>
-                        <div class="field"><label>Rôle</label>
-                            <select name="role" class="input-std">
-                                <option value="server" ${user?.role === 'server' ? 'selected' : ''}>Serveur</option>
-                                <option value="admin" ${user?.role === 'admin' ? 'selected' : ''}>Admin</option>
-                            </select>
-                        </div>
+                        <input type="hidden" name="role" value="server">
                         <div class="field">
                             <label>${isEdit ? 'Nouveau PIN (optionnel)' : 'Code PIN (4 chiffres)'}</label>
                             <input type="text" name="pin_code" value="" pattern="[0-9]{4}" maxlength="4" ${isEdit ? '' : 'required'} class="input-std" placeholder="${isEdit ? 'Laisser vide pour garder' : '0000'}">
                         </div>
-                        <div class="field full"><label>Email (Optionnel pour serveurs)</label><input type="email" name="email" value="${escapeHtml(user?.email || '')}" class="input-std"></div>
+                        <div class="field full"><label>Email (Optionnel)</label><input type="email" name="email" value="${escapeHtml(user?.email || '')}" class="input-std"></div>
                         <div class="field full">
                             <label>Statut</label>
                             <select name="is_active" class="input-std" ${isSelf ? 'disabled' : ''}>

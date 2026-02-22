@@ -42,8 +42,12 @@ export interface PendingOrder {
   table_id?: string | null;
   table_label?: string | null;
   session_id?: string | null;
-  cancel_reason?: 'damage' | 'loss' | null;
+  cancel_reason?: 'damage' | 'loss' | 'cancel' | null;
   cancel_note?: string | null;
+  kitchen_status?: 'new' | 'ready' | 'rejected' | null;
+  kitchen_reason?: string | null;
+  kitchen_note?: string | null;
+  kitchen_updated_at?: string | null;
 }
 
 export interface OrderItemDetail {

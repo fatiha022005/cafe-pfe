@@ -18,12 +18,17 @@ const ICON_DELETE = `
 const productImageColor = (category) => {
     const map = {
         'Café': '#c85c2a',
+        'Cafe': '#c85c2a',
         'Boissons': '#2563eb',
         'Boissons Chaudes': '#c85c2a',
         'Boissons Froides': '#2563eb',
+        'Froid': '#2563eb',
         'Snack': '#16a34a',
         'Nourriture': '#16a34a',
+        'Sale': '#16a34a',
+        'Sucre': '#b45309',
         'Viennoiseries': '#b45309',
+        'Signature': '#7c3aed',
         'Petit Dejeuner': '#9333ea',
         'Plats': '#dc2626'
     };
@@ -109,7 +114,13 @@ function getModalTemplate() {
                     <div class="field">
                         <label>Catégorie</label>
                         <select name="category" class="input-std">
-                            <option>Café</option><option>Boissons</option><option>Snack</option>
+                            <option>Café</option>
+                            <option>Froid</option>
+                            <option>Sale</option>
+                            <option>Sucre</option>
+                            <option>Signature</option>
+                            <option>Boissons</option>
+                            <option>Snack</option>
                         </select>
                     </div>
                     <div class="field">

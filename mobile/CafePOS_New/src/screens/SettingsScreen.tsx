@@ -60,7 +60,7 @@ export default function SettingsScreen({ navigation }: SettingsScreenProps) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <TopBar title="CafePOS" />
       <QuickNav current="Settings" />
 
       <Text style={styles.headerTitle}>Parametres</Text>

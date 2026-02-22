@@ -193,7 +193,7 @@ export default function PaymentScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-      <TopBar title="CafePOS" subtitle={user?.role === 'admin' ? 'ADMIN' : 'SERVEUR'} />
+      <TopBar title="CafePOS" />
       <QuickNav current={orderId ? 'Commandes' : 'Vente'} />
 
       <View style={styles.header}>

@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CafePOS | Cuisine</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-strong: #1e222c;
+      --accent: #e07a3d;
+      --accent-soft: rgba(224, 122, 61, 0.2);
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: rgba(148, 163, 184, 0.15);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Sora", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .hidden { display: none !important; }
+    .app {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 20px 40px;
+    }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f0b37e, #c85c2a 60%, #8b3a1a);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #fff4e6;
+    }
+    .brand h1 { margin: 0; font-size: 1.2rem; }
+    .brand span { color: var(--muted); font-size: 0.85rem; }
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .btn {
+      border: 1px solid transparent;
+      background: var(--panel-strong);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn.primary { background: var(--accent); }
+    .btn.ghost { border-color: var(--border); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .refresh-count {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .queue {
+      display: grid;
+      gap: 14px;
+    }
+    .order-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      display: grid;
+      gap: 12px;
+    }
+    .order-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .order-title {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .order-meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .order-items {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .order-items li {
+      display: flex;
+      justify-content: space-between;
+      color: #e2e8f0;
+    }
+    .order-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn.ready { background: var(--ok); color: #07130b; }
+    .btn.reject { background: transparent; border-color: var(--danger); color: var(--danger); }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .empty {
+      background: var(--panel);
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .login {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px;
+      display: grid;
+      gap: 14px;
+    }
+    .input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--text);
+    }
+    .help {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: grid;
+      place-items: center;
+      z-index: 50;
+    }
+    .modal-card {
+      width: min(420px, 92vw);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--text);
+    }
+    .note {
+      min-height: 80px;
+      resize: vertical;
+    }
+    .reject-toggle {
+      display: flex;
+      gap: 10px;
+    }
+    .reject-toggle .btn {
+      flex: 1;
+    }
+    .reject-toggle .btn.active {
+      background: var(--accent);
+      color: #1b120b;
+    }
+    .reject-items {
+      display: grid;
+      gap: 10px;
+    }
+    .reject-items-list {
+      display: grid;
+      gap: 8px;
+    }
+    .reject-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+    }
+    .reject-item label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+    .reject-qty {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .reject-qty input {
+      width: 64px;
+      text-align: center;
+    }
+    .reject-qty span {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="login-panel" class="login">
+    <form id="login-form" class="login-card">
+      <div class="brand">
+        <div class="logo">CP</div>
+        <div>
+          <h1 style="margin:0">CafePOS Cuisine</h1>
+          <span>Accès cuisine</span>
+        </div>
+      </div>
+      <input class="input" type="email" name="email" placeholder="Email admin" required>
+      <input class="input" type="password" name="password" placeholder="Mot de passe" required>
+      <button class="btn primary" type="submit">Connexion</button>
+      <div class="help">Utilisez un compte admin web existant.</div>
+      <div id="login-error" class="help" style="color: var(--danger);"></div>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <div class="top">
+      <div class="brand">
+        <div class="logo">CP</div>
+        <div>
+          <h1>CafePOS</h1>
+          <span>Cuisine – commandes en attente</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="btn-refresh" class="btn ghost">Actualiser</button>
+        <span id="refresh-count" class="refresh-count">5s</span>
+        <button id="btn-logout" class="btn">Déconnexion</button>
+      </div>
+    </div>
+
+    <div id="queue" class="queue"></div>
+  </div>
+
+  <div id="reject-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3 style="margin:0">Refuser la commande</h3>
+      <div class="help">Choisir une raison et proposer une solution.</div>
+      <div class="reject-toggle">
+        <button id="reject-mode-all" class="btn ghost active" type="button">Refuser tout</button>
+        <button id="reject-mode-partial" class="btn ghost" type="button">Refuser articles</button>
+      </div>
+      <div id="reject-items" class="reject-items hidden">
+        <div class="help">Choisir les articles et la quantite a refuser.</div>
+        <div id="reject-items-list" class="reject-items-list"></div>
+      </div>
+      <select id="reject-reason" class="select">
+        <option value="rupture">Rupture de stock</option>
+        <option value="panne">Panne matériel</option>
+        <option value="autre">Autre</option>
+      </select>
+      <textarea id="reject-note" class="input note" placeholder="Suggestion au serveur (ex: proposer un produit similaire)"></textarea>
+      <div class="modal-actions">
+        <button id="reject-cancel" class="btn ghost">Annuler</button>
+        <button id="reject-confirm" class="btn reject">Refuser</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://nmwqihsbedoyxupqwime.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5td3FpaHNiZWRveXh1cHF3aW1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3NTgxMTUsImV4cCI6MjA4NjMzNDExNX0.eXmA88UCSMGr8xUnpULZQBAIwaxaL_XM4HO5B7Nfp2o';
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const queueEl = document.getElementById('queue');
+    const loginPanel = document.getElementById('login-panel');
+    const appEl = document.getElementById('app');
+    const loginError = document.getElementById('login-error');
+    const rejectModal = document.getElementById('reject-modal');
+    const rejectReason = document.getElementById('reject-reason');
+    const rejectNote = document.getElementById('reject-note');
+    const rejectModeAll = document.getElementById('reject-mode-all');
+    const rejectModePartial = document.getElementById('reject-mode-partial');
+    const rejectItemsWrap = document.getElementById('reject-items');
+    const rejectItemsList = document.getElementById('reject-items-list');
+    const refreshCountEl = document.getElementById('refresh-count');
+
+    let currentRejectId = null;
+    let currentRejectOrder = null;
+    let rejectMode = 'all';
+    let ordersCache = [];
+    let refreshTimer = null;
+    let refreshCountdown = 5;
+
+    const escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const formatTime = (value) =>
+      value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--';
+
+    function setRejectMode(mode) {
+      rejectMode = mode;
+      if (rejectModeAll) rejectModeAll.classList.toggle('active', mode === 'all');
+      if (rejectModePartial) rejectModePartial.classList.toggle('active', mode === 'partial');
+      if (rejectItemsWrap) rejectItemsWrap.classList.toggle('hidden', mode !== 'partial');
+    }
+
+    function buildRejectItems(order) {
+      if (!rejectItemsList) return;
+      const items = order?.order_items || [];
+      if (!items.length) {
+        rejectItemsList.innerHTML = '<div class="help">Aucun article.</div>';
+        return;
+      }
+      rejectItemsList.innerHTML = items.map((item) => {
+        const name = escapeHtml(item.products?.name || 'Produit');
+        const qty = Number(item.quantity || 0) || 1;
+        return `
+          <div class="reject-item">
+            <label>
+              <input class="reject-check" type="checkbox" data-item-id="${item.id}">
+              <span>${name}</span>
+            </label>
+            <div class="reject-qty">
+              <input class="input reject-qty-input" type="number" min="1" max="${qty}" value="1" data-item-id="${item.id}" data-max="${qty}">
+              <span>/${qty}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    if (rejectItemsList) {
+      rejectItemsList.addEventListener('input', (event) => {
+        const target = event.target;
+        if (!target || !target.classList?.contains('reject-qty-input')) return;
+        const max = Number.parseInt(target.dataset.max || '1', 10) || 1;
+        let value = Number.parseInt(target.value || '1', 10);
+        if (!value || value < 1) value = 1;
+        if (value > max) value = max;
+        target.value = value;
+      });
+    }
+
+    async function ensureAdminSession() {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) {
+        showLogin();
+        return false;
+      }
+      const { data: profile, error } = await sb
+        .from('users')
+        .select('role, is_active')
+        .eq('auth_user_id', session.user.id)
+        .single();
+
+      if (error || profile?.role !== 'admin' || profile?.is_active === false) {
+        showLogin('Accès réservé aux admins.');
+        return false;
+      }
+      loginPanel.classList.add('hidden');
+      appEl.classList.remove('hidden');
+      return true;
+    }
+
+    function showLogin(message) {
+      appEl.classList.add('hidden');
+      loginPanel.classList.remove('hidden');
+      loginError.textContent = message || '';
+    }
+
+    async function loadOrders() {
+      const { data, error } = await sb.from('orders')
+        .select(`
+          id,
+          user_id,
+          order_number,
+          created_at,
+          updated_at,
+          kitchen_status,
+          kitchen_reason,
+          kitchen_note,
+          kitchen_updated_at,
+          tables(label),
+          order_items(id, product_id, quantity, products(name))
+        `)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        queueEl.innerHTML = '<div class="empty">Erreur de chargement des commandes.</div>';
+        console.error(error);
+        return;
+      }
+
+      const sorted = (data || []).slice().sort((a, b) => {
+        const aHandled = a.kitchen_status === 'ready' || a.kitchen_status === 'rejected';
+        const bHandled = b.kitchen_status === 'ready' || b.kitchen_status === 'rejected';
+        if (aHandled !== bHandled) return aHandled ? 1 : -1;
+        const aTime = new Date((aHandled ? (a.kitchen_updated_at || a.created_at) : a.created_at) || a.created_at).getTime();
+        const bTime = new Date((bHandled ? (b.kitchen_updated_at || b.created_at) : b.created_at) || b.created_at).getTime();
+        return aTime - bTime;
+      });
+
+      ordersCache = sorted;
+
+      if (!sorted.length) {
+        queueEl.innerHTML = '<div class="empty">Aucune commande en attente.</div>';
+        return;
+      }
+
+      queueEl.innerHTML = sorted.map((order, index) => {
+        const tableLabel = order.tables?.label ? `Table ${order.tables.label}` : 'Vente Directe';
+        const items = order.order_items || [];
+        const itemsHtml = items.map(i => `
+          <li>
+            <span>${escapeHtml(i.products?.name || 'Produit')}</span>
+            <strong>x${i.quantity}</strong>
+          </li>
+        `).join('');
+        const status = order.kitchen_status || 'new';
+        const tag = status === 'ready'
+          ? '<span class="tag" style="background: rgba(34,197,94,0.2); color:#22c55e;">Prête</span>'
+          : status === 'rejected'
+            ? '<span class="tag" style="background: rgba(239,68,68,0.2); color:#ef4444;">Refusée</span>'
+            : '<span class="tag">En attente</span>';
+        const handled = status === 'ready' || status === 'rejected';
+        const reason = order.kitchen_reason ? ` • ${escapeHtml(order.kitchen_reason)}` : '';
+        const note = order.kitchen_note ? `<div class="order-meta">Note: ${escapeHtml(order.kitchen_note)}</div>` : '';
+
+        return `
+          <article class="order-card" data-id="${order.id}">
+            <div class="order-head">
+              <div>
+                <div class="order-title">#${order.order_number} • ${tableLabel}</div>
+                <div class="order-meta">${formatTime(order.created_at)} • Position ${index + 1}</div>
+                ${handled ? `<div class="order-meta">${status === 'ready' ? 'Prête' : 'Refusée'}${reason}</div>` : ''}
+                ${handled ? note : ''}
+              </div>
+              ${tag}
+            </div>
+            <ul class="order-items">${itemsHtml}</ul>
+            <div class="order-actions">
+              <button class="btn ready" data-action="ready" ${handled ? 'disabled' : ''}>Commande préparée</button>
+              <button class="btn reject" data-action="reject" ${handled ? 'disabled' : ''}>Refuser</button>
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    async function markReady(orderId) {
+      const { error } = await sb.from('orders').update({
+        kitchen_status: 'ready',
+        kitchen_reason: null,
+        kitchen_note: null,
+        kitchen_updated_at: new Date().toISOString()
+      }).eq('id', orderId);
+      if (error) {
+        alert('Erreur: ' + error.message);
+        console.error(error);
+        return;
+      }
+      loadOrders();
+    }
+
+    async function markRejected(orderId, reason, note) {
+      const { error } = await sb.from('orders').update({
+        kitchen_status: 'rejected',
+        kitchen_reason: reason,
+        kitchen_note: note || null,
+        kitchen_updated_at: new Date().toISOString()
+      }).eq('id', orderId);
+      if (error) {
+        alert('Erreur: ' + error.message);
+        console.error(error);
+        return;
+      }
+      loadOrders();
+    }
+
+    if (rejectModeAll) rejectModeAll.onclick = () => setRejectMode('all');
+    if (rejectModePartial) rejectModePartial.onclick = () => setRejectMode('partial');
+
+    queueEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      const card = e.target.closest('.order-card');
+      if (!btn || !card) return;
+      const id = card.dataset.id;
+      if (btn.dataset.action === 'ready') markReady(id);
+      if (btn.dataset.action === 'reject') {
+        currentRejectId = id;
+        currentRejectOrder = ordersCache.find((order) => order.id === id) || null;
+        rejectReason.value = 'rupture';
+        rejectNote.value = '';
+        setRejectMode('all');
+        buildRejectItems(currentRejectOrder);
+        rejectModal.classList.remove('hidden');
+      }
+    });
+
+    document.getElementById('reject-cancel').onclick = () => {
+      rejectModal.classList.add('hidden');
+      currentRejectId = null;
+      currentRejectOrder = null;
+    };
+    document.getElementById('reject-confirm').onclick = async () => {
+      if (!currentRejectId || !currentRejectOrder) return;
+      const reason = rejectReason.value;
+      const note = rejectNote.value.trim();
+
+      if (rejectMode === 'all') {
+        markRejected(currentRejectId, reason, note);
+        rejectModal.classList.add('hidden');
+        currentRejectId = null;
+        currentRejectOrder = null;
+        return;
+      }
+
+      if (!currentRejectOrder.user_id) {
+        alert('Utilisateur manquant.');
+        return;
+      }
+
+      if (!rejectItemsList) {
+        alert('Liste des articles indisponible.');
+        return;
+      }
+
+      const checks = Array.from(rejectItemsList.querySelectorAll('.reject-check:checked'));
+      if (!checks.length) {
+        alert('Selectionnez au moins un article.');
+        return;
+      }
+
+      const itemsById = new Map((currentRejectOrder.order_items || []).map((item) => [item.id, item]));
+      const selected = [];
+
+      for (const check of checks) {
+        const itemId = check.dataset.itemId;
+        const item = itemsById.get(itemId);
+        if (!item) continue;
+        const qtyInput = rejectItemsList.querySelector(`.reject-qty-input[data-item-id="${itemId}"]`);
+        const maxQty = Number(item.quantity || 1) || 1;
+        let qty = Number.parseInt(qtyInput?.value || '1', 10);
+        if (!qty || qty < 1) qty = 1;
+        if (qty > maxQty) qty = maxQty;
+
+        const { error } = await sb.rpc('cancel_pending_order_item', {
+          p_order_id: currentRejectOrder.id,
+          p_item_id: itemId,
+          p_user_id: currentRejectOrder.user_id,
+          p_reason: 'cancel',
+          p_note: note || null,
+          p_cancel_qty: qty,
+        });
+
+        if (error) {
+          alert('Erreur: ' + error.message);
+          console.error(error);
+          return;
+        }
+
+        selected.push({ name: item.products?.name || 'Produit', qty });
+      }
+
+      const summary = selected.map((entry) => `${entry.name} x${entry.qty}`).join(', ');
+      const finalNote = [note, summary ? `Articles refuses: ${summary}` : ''].filter(Boolean).join(' | ');
+
+      const { error: updateError } = await sb.from('orders').update({
+        kitchen_reason: reason,
+        kitchen_note: finalNote || null,
+        kitchen_updated_at: new Date().toISOString(),
+      }).eq('id', currentRejectOrder.id);
+
+      if (updateError) {
+        alert('Erreur: ' + updateError.message);
+        console.error(updateError);
+        return;
+      }
+
+      rejectModal.classList.add('hidden');
+      currentRejectId = null;
+      currentRejectOrder = null;
+      loadOrders();
+    };
+
+    function resetCountdown() {
+      refreshCountdown = 5;
+      if (refreshCountEl) refreshCountEl.textContent = `${refreshCountdown}s`;
+    }
+
+    function startAutoRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      resetCountdown();
+      refreshTimer = setInterval(async () => {
+        refreshCountdown -= 1;
+        if (refreshCountdown <= 0) {
+          refreshCountdown = 5;
+          await loadOrders();
+        }
+        if (refreshCountEl) refreshCountEl.textContent = `${refreshCountdown}s`;
+      }, 1000);
+    }
+
+    document.getElementById('btn-refresh').onclick = async () => {
+      await loadOrders();
+      resetCountdown();
+    };
+    document.getElementById('btn-logout').onclick = async () => {
+      await sb.auth.signOut();
+      showLogin('Déconnecté.');
+    };
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      loginError.textContent = '';
+      const form = e.target;
+      const email = form.email.value.trim();
+      const password = form.password.value;
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) {
+        loginError.textContent = error.message || 'Connexion échouée.';
+        return;
+      }
+      const ok = await ensureAdminSession();
+      if (ok) loadOrders();
+    });
+
+    (async () => {
+      const ok = await ensureAdminSession();
+      if (ok) {
+        await loadOrders();
+        startAutoRefresh();
+      }
+    })();
+  </script>
+</body>
+</html>

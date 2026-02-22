@@ -62,7 +62,7 @@ export default function OrderSummary({ items, onRemove, onValidate, bottomOffset
             </View>
 
             <TouchableOpacity style={styles.payBtn} onPress={onValidate}>
-              <Text style={styles.btnText}>Payer / Ticket</Text>
+              <Text style={styles.btnText}>Valider</Text>
             </TouchableOpacity>
           </View>
         </>

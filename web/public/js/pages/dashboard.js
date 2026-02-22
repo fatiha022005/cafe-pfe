@@ -80,11 +80,11 @@ window.renderDashboard = async function() {
 
             <div class="stat-card" style="border-color: rgba(239, 68, 68, 0.3);">
                 <div class="stat-head">
-                    <span class="stat-label text-danger">Stock Faible</span>
+                    <span class="stat-label text-danger">Stock</span>
                     <span class="stat-icon">${ICON_ALERT}</span>
                 </div>
                 <div class="stat-value text-danger" id="d-stock">--</div>
-                <div class="stat-trend text-danger">Produits à commander</div>
+                <div class="stat-trend text-danger">Produits en alerte</div>
             </div>
         </div>
 
@@ -106,6 +106,7 @@ window.renderDashboard = async function() {
                             <tr>
                                 <th>Produit</th>
                                 <th class="text-right">Qté</th>
+                                <th class="text-center">Statut</th>
                             </tr>
                         </thead>
                         <tbody id="stock-alert-list">
@@ -158,9 +159,33 @@ async function loadDashboardData(range) {
 
         if (errStock) throw errStock;
 
-        const lowStock = (stockRows || [])
-            .filter(p => toNumber(p.stock_quantity) <= toNumber(p.min_stock_alert ?? 10))
-            .slice(0, 10);
+        const stockItems = (stockRows || []).map(p => {
+            const stock = toNumber(p.stock_quantity);
+            const minAlert = toNumber(p.min_stock_alert ?? 10);
+            let status = 'OK';
+            let badgeClass = 'badge-success';
+            let qtyClass = 'text-success';
+
+            if (stock <= 0) {
+                status = 'Rupture';
+                badgeClass = 'badge-danger';
+                qtyClass = 'text-danger';
+            } else if (stock <= minAlert) {
+                status = 'Faible';
+                badgeClass = 'badge-warning';
+                qtyClass = 'text-warning';
+            }
+
+            return {
+                name: p.name,
+                stock,
+                status,
+                badgeClass,
+                qtyClass
+            };
+        });
+
+        const alertCount = stockItems.filter(p => p.status !== 'OK').length;
 
         const totalRevenue = orders.reduce((acc, o) => acc + toNumber(o.total_amount), 0);
         const totalOrders = orders.length;
@@ -169,16 +194,19 @@ async function loadDashboardData(range) {
         document.getElementById('d-revenue').textContent = formatMoney(totalRevenue);
         document.getElementById('d-orders').textContent = totalOrders;
         document.getElementById('d-avg').textContent = formatMoney(averageBasket);
-        document.getElementById('d-stock').textContent = lowStock.length;
+        document.getElementById('d-stock').textContent = alertCount;
 
         const stockTbody = document.getElementById('stock-alert-list');
-        if (lowStock.length === 0) {
-            stockTbody.innerHTML = '<tr><td colspan="2" class="text-muted text-center">Tout est OK</td></tr>';
+        if (stockItems.length === 0) {
+            stockTbody.innerHTML = '<tr><td colspan="3" class="text-muted text-center">Aucun produit</td></tr>';
         } else {
-            stockTbody.innerHTML = lowStock.map(p => `
+            stockTbody.innerHTML = stockItems.map(p => `
                 <tr>
                     <td>${escapeHtml(p.name)}</td>
-                    <td class="text-right text-danger font-bold">${toNumber(p.stock_quantity)}</td>
+                    <td class="text-right ${p.qtyClass} font-bold">${p.stock}</td>
+                    <td class="text-center">
+                        <span class="badge ${p.badgeClass}">${p.status}</span>
+                    </td>
                 </tr>
             `).join('');
         }
@@ -273,7 +301,7 @@ function renderMainChart(orders, range) {
                 y: {
                     beginAtZero: true,
                     ticks: {
-                        stepSize: 5,
+                        stepSize: 10,
                         precision: 0
                     },
                     grid: { color: 'rgba(15, 23, 42, 0.08)' },
